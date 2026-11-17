@@ -21,6 +21,9 @@ ROOT=Path(__file__).resolve().parents[2]
 CONFIG=json.loads((ROOT/'scene.json').read_text(encoding='utf-8'))
 DT=0.032
 R=CONFIG['wheel_radius']
+HW=CONFIG['robot']
+Z=CONFIG['robot_origin_z']
+MAX_SPEED=HW['wheels']['max_speed_m_s']
 
 def angle(v):
     return (v+math.pi)%(2*math.pi)-math.pi
@@ -42,9 +45,10 @@ rotation=car.getField('rotation')
 block_position=block.getField('translation')
 motors=[sim.getDevice(f'{side}_motor') for side in ('left','right')]
 encoders=[sim.getDevice(f'{side}_encoder') for side in ('left','right')]
-ir=[sim.getDevice(f'ir{i}') for i in range(7)]
-sonar={name:sim.getDevice(f'sonar_{name}') for name in ('front','left','right')}
+ir=[sim.getDevice(f'ir{i}') for i in range(len(HW['ir']['positions_mm']))]
+sonar={s['name']:sim.getDevice('sonar_'+s['name']) for s in HW['sonar']['sensors']}
 camera=sim.getDevice('camera')
+IMAGE_WIDTH,IMAGE_HEIGHT=camera.getWidth(),camera.getHeight()
 for motor in motors:
     motor.setPosition(float('inf'))
     motor.setVelocity(0)
@@ -75,7 +79,8 @@ def pose():
 
 def grip_position():
     p=pose()
-    return [p[0]+.12*math.cos(p[2]),p[1]+.12*math.sin(p[2]),.085]
+    reach=HW['gripper']['reach_mm']/1000
+    return [p[0]+reach*math.cos(p[2]),p[1]+reach*math.sin(p[2]),HW['gripper']['carry_height_mm']/1000]
 
 def place_result():
     p=block.getPosition()
@@ -88,7 +93,7 @@ def place_result():
 
 def gripper(action):
     if action=='grab' and not state['carrying']:
-        if math.dist(grip_position()[:2],block.getPosition()[:2])<.05:
+        if math.dist(grip_position()[:2],block.getPosition()[:2])<HW['gripper']['grab_distance_mm']/1000:
             state['carrying']=True;state['grasped']=True;state['placed']=None
             block.resetPhysics();log('已夹取物块')
         else:log('夹爪与物块距离较远，请继续接近')
@@ -103,7 +108,7 @@ def reset(group=None,color=None):
     global still,last_encoder,algorithm
     if group is not None:state['group']=max(1,int(group))
     if color in ('red','yellow','blue'):state['color']=color
-    translation.setSFVec3f(CONFIG['start']+[.032])
+    translation.setSFVec3f(CONFIG['start']+[Z])
     rotation.setSFRotation([0,0,1,0]);car.resetPhysics()
     block_position.setSFVec3f(CONFIG['pickup']+[.035]);block.resetPhysics()
     block_color.setSFColor({'red':[.9,.025,.04],'yellow':[1,.78,.015],'blue':[.025,.14,.9]}[state['color']])
@@ -136,12 +141,12 @@ def receive(message):
     elif command=='gripper':gripper(data['value'])
     elif command=='snapshot':
         destination=ROOT/'output';destination.mkdir(exist_ok=True)
-        raw=np.frombuffer(camera.getImage(),np.uint8).reshape((240,320,4))[:,:,:3]
+        raw=np.frombuffer(camera.getImage(),np.uint8).reshape((IMAGE_HEIGHT,IMAGE_WIDTH,4))[:,:,:3]
         cv2.imencode('.png',raw)[1].tofile(str(destination/f'camera-{tick}.png'))
         log('摄像头原图已保存至 output 文件夹')
     elif command=='channel':
         a,b=CONFIG['channel']
-        translation.setSFVec3f([b[0]-.09,(a[1]+b[1])/2,.032])
+        translation.setSFVec3f([b[0]-CONFIG['body_size'][0]/2-.015,(a[1]+b[1])/2,Z])
         rotation.setSFRotation([0,0,1,math.pi]);car.resetPhysics()
         state['running']=False;actuated[:]=[0,0]
         log('已放到超声波区域入口，车头朝左')
@@ -174,7 +179,7 @@ while sim.step(32)!=-1:
     current_encoder=[d.getValue() for d in encoders]
     wheel_speed=[(a-b)*R/DT for a,b in zip(current_encoder,last_encoder)]
     last_encoder=current_encoder
-    image=np.frombuffer(camera.getImage(),np.uint8).reshape((240,320,4))[:,:,:3].copy()
+    image=np.frombuffer(camera.getImage(),np.uint8).reshape((IMAGE_HEIGHT,IMAGE_WIDTH,4))[:,:,:3].copy()
     # 原始图像供会员自行识别，约每 0.2 秒更新面板。
     if tick%6==0:
         ok,jpg=cv2.imencode('.jpg',image,[cv2.IMWRITE_JPEG_QUALITY,70])
@@ -196,14 +201,14 @@ while sim.step(32)!=-1:
         except Exception as error:
             state['running']=False;log(f'算法错误，已停车：{error}');traceback.print_exc()
     for i,name in enumerate(('left','right')):
-        target=max(-.25,min(.25,float(command.get(name,0)))) if state['running'] else 0
-        actuated[i]+=(target-actuated[i])*DT/(.12+DT)
+        target=max(-MAX_SPEED,min(MAX_SPEED,float(command.get(name,0)))) if state['running'] else 0
+        actuated[i]+=(target-actuated[i])*DT/(HW['wheels']['response_s']+DT)
         motors[i].setVelocity(actuated[i]/R)
     if state['carrying']:
         block_position.setSFVec3f(grip_position());block.setVelocity([0]*6)
     elif tick%8==0:state['placed']=place_result()
     p=pose();finish=CONFIG['finish']
-    contact_centers=[(0,.0625),(0,-.0625),(-.055,0)]
+    contact_centers=[(0,CONFIG['axle_length']/2),(0,-CONFIG['axle_length']/2),(HW['caster']['x_mm']/1000,0)]
     def contact_inside(local):
         x=p[0]+local[0]*math.cos(p[2])-local[1]*math.sin(p[2])
         y=p[1]+local[0]*math.sin(p[2])+local[1]*math.cos(p[2])

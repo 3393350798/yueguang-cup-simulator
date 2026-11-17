@@ -14,8 +14,13 @@ if (-not (Test-Path -LiteralPath $executable)) {
     Read-Host 'Press Enter to close'
     exit 1
 }
+& $env:YUEGUANG_PYTHON (Join-Path $project 'tools\build_scene.py')
+if ($LASTEXITCODE -ne 0) {
+    Read-Host 'Could not generate the robot. Press Enter to close'
+    exit 1
+}
 Start-Process -FilePath $executable -WorkingDirectory $project -ArgumentList @('--batch', '--mode=realtime', '--stream', 'worlds/moonlight.wbt')
-$panel = 'http://127.0.0.1:1234/robot_windows/moonlight/moonlight.html?name=Moonlight'
+$panel = 'http://127.0.0.1:1234/robot_windows/moonlight/moonlight.html?name=Moonlight&v=' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 Write-Host "Opening the practice panel: $panel"
 for ($attempt = 0; $attempt -lt 60; $attempt++) {
     try {

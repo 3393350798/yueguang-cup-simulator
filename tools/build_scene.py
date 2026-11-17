@@ -1,4 +1,4 @@
-"""生成教学赛场、纹理与路径。仅重建场景时需要 Pillow。"""
+"""根据 robot.json 生成教学场景与会员小车。"""
 from pathlib import Path
 import json
 import math
@@ -9,6 +9,13 @@ ASSETS = ROOT / 'worlds' / 'textures'
 ASSETS.mkdir(parents=True, exist_ok=True)
 SCALE = 0.0027
 SIZE = 2.0
+robot = json.loads((ROOT/'robot.json').read_text(encoding='utf-8-sig'))
+body, wheels = robot['body'], robot['wheels']
+length, width, height = [body[k]/1000 for k in ('length_mm','width_mm','height_mm')]
+origin_z = body['clearance_mm']/1000 + height/2
+radius, wheel_width, track = [wheels[k]/1000 for k in ('radius_mm','width_mm','track_mm')]
+
+def meters(values):return [x/1000 for x in values]
 
 def xy(point):
     return [(point[0] - 437.5) * SCALE, (415 - point[1]) * SCALE]
@@ -42,8 +49,9 @@ circles = []
 for row, py in [('right',202-0.25/SCALE), ('left',202+0.25/SCALE)]:
     for color, px in [('red',565-0.15/SCALE),('yellow',565),('blue',565+0.15/SCALE)]:
         circles.append(dict(side=row,color=color,center=xy((px,py))))
-config = dict(floor_size=SIZE, line_width=0.0225, wheel_radius=0.027,
-              axle_length=0.125, body_size=[0.15,0.13], start=xy((195,670)),
+config = dict(floor_size=SIZE, line_width=0.0225, wheel_radius=radius,
+              axle_length=track, body_size=[length,max(width,track+wheel_width)],
+              robot=robot, robot_origin_z=origin_z, start=xy((195,670)),
               finish=xy((195,190)), pickup=xy((632,202)), marker=xy((565,202)),
               tag=xy((715,141)), circles=circles,
               channel=[xy((363,475)),xy((519,594))],
@@ -130,30 +138,37 @@ children [ Shape {{ appearance DEF BLOCK_MATERIAL PBRAppearance {{ baseColor 0.9
 boundingObject Cylinder {{ radius 0.028 height 0.07 }} physics Physics {{ density -1 mass 0.04 }}
 }}''')
 sx,sy=config['start']
-parts.append(f'''DEF CAR Robot {{ translation {sx} {sy} 0.032
+parts.append(f'''DEF CAR Robot {{ translation {sx} {sy} {origin_z}
 name "Moonlight" controller "moonlight" supervisor TRUE window "moonlight"
 children [
-Shape {{ appearance {material('0.08 0.16 0.25')} geometry Box {{ size 0.15 0.105 0.045 }} }}
-Transform {{ translation -0.015 0 0.034 children [ Shape {{ appearance {material('0.1 0.68 0.63')} geometry Box {{ size 0.075 0.085 0.022 }} }} ] }}
-Transform {{ translation 0.095 0 0 children [ Shape {{ appearance {material('0.98 0.59 0.18')} geometry Box {{ size 0.06 0.012 0.012 }} }} ] }}
-Transform {{ translation 0.12 0.028 0 children [ Shape {{ appearance {material('0.98 0.59 0.18')} geometry Box {{ size 0.012 0.055 0.018 }} }} ] }}
-Transform {{ translation 0.12 -0.028 0 children [ Shape {{ appearance {material('0.98 0.59 0.18')} geometry Box {{ size 0.012 0.055 0.018 }} }} ] }}
-Camera {{ translation 0.05 0 0.075 rotation 0 1 0 0.15 name "camera" width 320 height 240 fieldOfView 1.25 near 0.01 far 3 }}
+Shape {{ appearance {material('0.08 0.16 0.25')} geometry Box {{ size {v([length,width,height])} }} }}
+Transform {{ translation {-length*.1} 0 {height/2+.008} children [ Shape {{ appearance {material('0.1 0.68 0.63')} geometry Box {{ size {v([length*.5,width*.8,.016])} }} }} ] }}
 ''')
-for side,y in [('left',.0625),('right',-.0625)]:
-    parts.append(f'''HingeJoint {{ jointParameters HingeJointParameters {{ axis 0 1 0 anchor 0 {y} -0.005 }}
-device [ RotationalMotor {{ name "{side}_motor" maxVelocity 18 maxTorque 0.12 sound "" }} PositionSensor {{ name "{side}_encoder" }} ]
-endPoint Solid {{ name "{side}_wheel" translation 0 {y} -0.005 rotation 1 0 0 -1.5707963 contactMaterial "wheel"
-children [ Shape {{ appearance {material('0.12 0.13 0.16')} geometry Cylinder {{ radius 0.027 height 0.014 }} }} ]
-boundingObject Cylinder {{ radius 0.027 height 0.014 }} physics Physics {{ density -1 mass 0.06 }}
+g=robot['gripper'];reach=g['reach_mm']/1000;opening=g['opening_mm']/1000
+for position,size in [([(length/2+reach)/2,0,0],[reach-length/2,.012,.012]),
+                      ([reach,0,0],[.008,opening+.008,.012]),
+                      ([reach,opening/2,0],[.03,.008,.018]),
+                      ([reach,-opening/2,0],[.03,.008,.018])]:
+    parts.append(f'Transform {{ translation {v(position)} children [ Shape {{ appearance {material("0.98 0.59 0.18")} geometry Box {{ size {v(size)} }} }} ] }}')
+c=robot['camera']
+parts.append(f'''Transform {{ translation {v(meters(c['position_mm']))} rotation 0 0 1 {math.radians(c['yaw_deg'])} children [
+Camera {{ rotation 0 1 0 {math.radians(c['pitch_deg'])} name "camera" width {c['width']} height {c['height']} fieldOfView {math.radians(c['fov_deg'])} near 0.01 far 3 }} ] }}''')
+for side,y in [('left',track/2),('right',-track/2)]:
+    parts.append(f'''HingeJoint {{ jointParameters HingeJointParameters {{ axis 0 1 0 anchor 0 {y} {radius-origin_z} }}
+device [ RotationalMotor {{ name "{side}_motor" maxVelocity {wheels['max_speed_m_s']/radius} maxTorque {wheels['max_torque_nm']} sound "" }} PositionSensor {{ name "{side}_encoder" }} ]
+endPoint Solid {{ name "{side}_wheel" translation 0 {y} {radius-origin_z} rotation 1 0 0 -1.5707963 contactMaterial "wheel"
+children [ Shape {{ appearance {material('0.12 0.13 0.16')} geometry Cylinder {{ radius {radius} height {wheel_width} }} }} ]
+boundingObject Cylinder {{ radius {radius} height {wheel_width} }} physics Physics {{ density -1 mass {wheels['mass_kg']} }}
 }} }}''')
-parts.append(f'''Solid {{ name "caster" translation -0.055 0 -0.017 children [ Shape {{ appearance {material('0.7 0.73 0.78')} geometry Sphere {{ radius 0.013 }} }} ] boundingObject Sphere {{ radius 0.013 }} physics Physics {{ density -1 mass 0.01 }} contactMaterial "caster" }}''')
-for i,y in enumerate([.036,.024,.012,0,-.012,-.024,-.036]):
-    parts.append(f'''DistanceSensor {{ translation 0.062 {y} -0.02 rotation 0 1 0 1.5707963 name "ir{i}" type "infra-red" lookupTable [ 0 1000 0, 0.03 1000 0, 0.045 0 0, 0.12 0 0 ] numberOfRays 1 }}''')
-for name,angle in [('front',0),('left',math.pi/2),('right',-math.pi/2)]:
-    parts.append(f'''DistanceSensor {{ translation 0.03 0 0.055 rotation 0 0 1 {angle} name "sonar_{name}" type "sonar" lookupTable [ 0 0 0, 1.5 1.5 0 ] numberOfRays 5 aperture 0.35 }}''')
-parts.append(''' ] boundingObject Box { size 0.15 0.105 0.045 } physics Physics { density -1 mass 0.6 }
-}''')
+cr=robot['caster']['radius_mm']/1000;cx=robot['caster']['x_mm']/1000
+parts.append(f'''Solid {{ name "caster" translation {cx} 0 {cr-origin_z} children [ Shape {{ appearance {material('0.7 0.73 0.78')} geometry Sphere {{ radius {cr} }} }} ] boundingObject Sphere {{ radius {cr} }} physics Physics {{ density -1 mass 0.01 }} contactMaterial "caster" }}''')
+for i,position in enumerate(robot['ir']['positions_mm']):
+    p=meters(position);scale=(origin_z+p[2])/.012
+    parts.append(f'''DistanceSensor {{ translation {v(p)} rotation 0 1 0 1.5707963 name "ir{i}" type "infra-red" lookupTable [ 0 1000 0, {.03*scale} 1000 0, {.045*scale} 0 0, {.12*scale} 0 0 ] numberOfRays 1 }}''')
+s=robot['sonar'];distance=s['range_mm']/1000
+for device in s['sensors']:
+    parts.append(f'''DistanceSensor {{ translation {v(meters(device['position_mm']))} rotation 0 0 1 {math.radians(device['yaw_deg'])} name "sonar_{device['name']}" type "sonar" lookupTable [ 0 0 0, {distance} {distance} 0 ] numberOfRays 5 aperture {math.radians(s['aperture_deg'])} }}''')
+parts.append(f''' ] boundingObject Box {{ size {v([length,width,height])} }} physics Physics {{ density -1 mass {body['mass_kg']} }}
+}}''')
 (ROOT/'worlds'/'moonlight.wbt').write_text('\n'.join(parts)+'\n',encoding='utf-8')
-print('Generated worlds/moonlight.wbt, scene.json and textures')
-
+print('Generated worlds/moonlight.wbt from robot.json')

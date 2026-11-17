@@ -1,10 +1,15 @@
-import config from './scene.js';
+const {default:config}=await import('./scene.js?v='+Date.now());
 const $=id=>document.getElementById(id);
 const colors={red:'红色',yellow:'黄色',blue:'蓝色'};
+const hardware=config.robot;
+const deviceNames={front:'前距',left:'左距',right:'右距',rear:'后距'};
+$('hardware-summary').textContent=`${hardware.name} · 底盘 ${hardware.body.length_mm} × ${hardware.body.width_mm} mm · 轮径 ${hardware.wheels.radius_mm*2} mm · 轮距 ${hardware.wheels.track_mm} mm · 红外 ${hardware.ir.positions_mm.length} 路 · 超声波 ${hardware.sonar.sensors.length} 路 · 摄像头 ${hardware.camera.width} × ${hardware.camera.height}`;
+document.querySelector('.camera').style.aspectRatio=`${hardware.camera.width}/${hardware.camera.height}`;
 const help={manual:'按住方向按钮驾驶，松开停车。在 Webots 画面中也可使用 W/A/S/D，E 夹取/释放，空格停车。',member:'在 member_algorithm.py 中填写自己的算法。模板初始为停车，保存后点击重载算法。'};
 let state=null,path=[],socket=null,pending=[];
 const image=new Image();
 const base=new URL('track.png',location.href);
+base.searchParams.set('v',Date.now());
 image.src=base.href;
 function send(command,extra={}){
   const payload=JSON.stringify({command,...extra});
@@ -40,7 +45,7 @@ function render(data){
   $('grasp').textContent=data.carrying?'夹持中':data.grasped?'已完成':'等待';
   $('placed').textContent=data.placed?(data.placed.correct?'正确目标圈':'其他放置圈')+` / ${data.placed.offset_mm} mm`:'尚未进圈';
   $('parking').textContent=data.aligned?'已摆正并停稳':data.parked?'已到达停稳':'等待';
-  for(const [name,value] of Object.entries(data.sensors.sonar))$('sonar-'+name).textContent=(value*100).toFixed(1)+' cm';
+  $('sonars').replaceChildren(...Object.entries(data.sensors.sonar).map(([name,value])=>{const d=document.createElement('div'),label=document.createElement('span'),v=document.createElement('strong');label.textContent=deviceNames[name]||name;v.textContent=(value*100).toFixed(1)+' cm';d.append(label,v);return d;}));
   $('ir').replaceChildren(...data.sensors.ir.map(value=>{const d=document.createElement('div');d.style.background=`rgb(${Math.round(value*235)},${Math.round(value*235)},${Math.round(value*235)})`;d.style.color=value>.5?'#263b45':'#fff';d.textContent=value.toFixed(2);return d;}));
   for(const name of ['left','right'])$('wheel-'+name).textContent=(name==='left'?'左轮 ':'右轮 ')+data.sensors.speed[name].toFixed(3)+' m/s';
   $('collision').textContent=data.collision?'超声波区域有碰撞记录':'区域内无碰撞记录';
@@ -61,7 +66,14 @@ function draw(){
   for(const y of [a[1],b[1]]){ctx.beginPath();ctx.moveTo(a[0],y);ctx.lineTo(b[0],y);ctx.stroke();}
   if(path.length){ctx.strokeStyle='#1caa91a0';ctx.lineWidth=2;ctx.beginPath();path.forEach((v,i)=>{const c=p(v);i?ctx.lineTo(...c):ctx.moveTo(...c);});ctx.stroke();}
   if(state){
-    const c=p(state.pose);ctx.save();ctx.translate(...c);ctx.rotate(-state.pose[2]);ctx.fillStyle='#133b4d';ctx.fillRect(-.075/config.floor_size*size,-.065/config.floor_size*size,.15/config.floor_size*size,.13/config.floor_size*size);ctx.fillStyle='#f6ab3d';ctx.fillRect(.075/config.floor_size*size,-3,.048/config.floor_size*size,6);ctx.fillStyle='#3bc2aa';ctx.fillRect(-10,-10,15,20);ctx.restore();
+    const c=p(state.pose),scale=size/config.floor_size/1000;
+    ctx.save();ctx.translate(...c);ctx.rotate(-state.pose[2]);ctx.scale(scale,scale);
+    const b=hardware.body,w=hardware.wheels;
+    ctx.fillStyle='#133b4d';ctx.fillRect(-b.length_mm/2,-b.width_mm/2,b.length_mm,b.width_mm);
+    ctx.fillStyle='#465765';for(const y of [-w.track_mm/2,w.track_mm/2])ctx.fillRect(-w.radius_mm,y-w.width_mm/2,w.radius_mm*2,w.width_mm);
+    ctx.strokeStyle='#f6ab3d';ctx.lineWidth=8;ctx.beginPath();ctx.moveTo(b.length_mm/2,0);ctx.lineTo(hardware.gripper.reach_mm,0);ctx.stroke();
+    ctx.fillStyle='#3bc2aa';for(const position of hardware.ir.positions_mm){ctx.beginPath();ctx.arc(position[0],-position[1],3,0,Math.PI*2);ctx.fill();}
+    ctx.fillStyle='#278fc3';ctx.fillRect(hardware.camera.position_mm[0]-5,-hardware.camera.position_mm[1]-5,10,10);ctx.restore();
   }
   for(const [name,text] of [['start','S'],['finish','F']]){const c=p(config[name]);ctx.fillStyle='#344d5f';ctx.font='600 16px sans-serif';ctx.textAlign='center';ctx.fillText(text,c[0],c[1]+5);}
 }
