@@ -24,6 +24,10 @@ R=CONFIG['wheel_radius']
 HW=CONFIG['robot']
 Z=CONFIG['robot_origin_z']
 MAX_SPEED=HW['wheels']['max_speed_m_s']
+MODEL=HW.get('model',{'kind':'parametric'})
+IMPORTED=MODEL['kind']=='urdf'
+WHEEL_NAMES=[MODEL[side+'_joint'] if IMPORTED else side+'_motor' for side in ('left','right')]
+WHEEL_SIGNS=[MODEL.get(side+'_sign',1) if IMPORTED else 1 for side in ('left','right')]
 
 def angle(v):
     return (v+math.pi)%(2*math.pi)-math.pi
@@ -43,8 +47,10 @@ block_color=sim.getFromDef('BLOCK_MATERIAL').getField('baseColor')
 translation=car.getField('translation')
 rotation=car.getField('rotation')
 block_position=block.getField('translation')
-motors=[sim.getDevice(f'{side}_motor') for side in ('left','right')]
-encoders=[sim.getDevice(f'{side}_encoder') for side in ('left','right')]
+motors=[sim.getDevice(name) for name in WHEEL_NAMES]
+encoders=[sim.getDevice(name+'_sensor') if IMPORTED else sim.getDevice(side+'_encoder') for name,side in zip(WHEEL_NAMES,('left','right'))]
+joint_motors={j['name']:sim.getDevice(j['name']) for j in MODEL.get('joints',[]) if j['name'] not in WHEEL_NAMES}
+joint_sensors={name:sim.getDevice(name+'_sensor') for name in joint_motors}
 ir=[sim.getDevice(f'ir{i}') for i in range(len(HW['ir']['positions_mm']))]
 sonar={s['name']:sim.getDevice('sonar_'+s['name']) for s in HW['sonar']['sensors']}
 camera=sim.getDevice('camera')
@@ -52,7 +58,7 @@ IMAGE_WIDTH,IMAGE_HEIGHT=camera.getWidth(),camera.getHeight()
 for motor in motors:
     motor.setPosition(float('inf'))
     motor.setVelocity(0)
-for device in encoders+ir+list(sonar.values())+[camera]:device.enable(32)
+for device in encoders+ir+list(sonar.values())+[camera]+list(joint_sensors.values()):device.enable(32)
 sim.getKeyboard().enable(32)
 
 state=dict(mode='manual',running=False,group=2,color='red',carrying=False,
@@ -114,7 +120,8 @@ def reset(group=None,color=None):
     block_color.setSFColor({'red':[.9,.025,.04],'yellow':[1,.78,.015],'blue':[.025,.14,.9]}[state['color']])
     tag_texture.setMFString(0,f"textures/tag{state['group']%2}.png")
     for motor in motors:motor.setVelocity(0)
-    actuated[:]=[0,0];manual[:]=[0,0];last_encoder=[d.getValue() for d in encoders]
+    for motor in joint_motors.values():motor.setPosition(0)
+    actuated[:]=[0,0];manual[:]=[0,0];last_encoder=[d.getValue()*sign for d,sign in zip(encoders,WHEEL_SIGNS)]
     state.update(running=False,carrying=False,elapsed=0,collision=False,grasped=False,
                  placed=None,parked=False,aligned=False,events=[],message='场景已重置')
     still=0
@@ -139,6 +146,9 @@ def receive(message):
     elif command=='drive':
         manual[:]=data['value'];state['running']=True;state['mode']='manual'
     elif command=='gripper':gripper(data['value'])
+    elif command=='joint':
+        joint_motors[data['name']].setPosition(float(data['value']))
+        log('关节目标已更新：'+data['name'])
     elif command=='snapshot':
         destination=ROOT/'output';destination.mkdir(exist_ok=True)
         raw=np.frombuffer(camera.getImage(),np.uint8).reshape((IMAGE_HEIGHT,IMAGE_WIDTH,4))[:,:,:3]
@@ -176,7 +186,7 @@ while sim.step(32)!=-1:
         else:state['running']=True
     elif keyboard_driving:
         manual[:]=[0,0];keyboard_driving=False
-    current_encoder=[d.getValue() for d in encoders]
+    current_encoder=[d.getValue()*sign for d,sign in zip(encoders,WHEEL_SIGNS)]
     wheel_speed=[(a-b)*R/DT for a,b in zip(current_encoder,last_encoder)]
     last_encoder=current_encoder
     image=np.frombuffer(camera.getImage(),np.uint8).reshape((IMAGE_HEIGHT,IMAGE_WIDTH,4))[:,:,:3].copy()
@@ -188,6 +198,7 @@ while sim.step(32)!=-1:
                  sonar={k:d.getValue() for k,d in sonar.items()},
                  encoder=dict(zip(('left','right'),current_encoder)),
                  speed=dict(zip(('left','right'),wheel_speed)),
+                 joints={name:sensor.getValue() for name,sensor in joint_sensors.items()},
                  carrying=state['carrying'],vision={})
     command=dict(left=0,right=0)
     if state['running']:
@@ -203,7 +214,9 @@ while sim.step(32)!=-1:
     for i,name in enumerate(('left','right')):
         target=max(-MAX_SPEED,min(MAX_SPEED,float(command.get(name,0)))) if state['running'] else 0
         actuated[i]+=(target-actuated[i])*DT/(HW['wheels']['response_s']+DT)
-        motors[i].setVelocity(actuated[i]/R)
+        motors[i].setVelocity(max(-motors[i].getMaxVelocity(),min(motors[i].getMaxVelocity(),actuated[i]/R*WHEEL_SIGNS[i])))
+    if state['running']:
+        for name,position in command.get('joints',{}).items():joint_motors[name].setPosition(float(position))
     if state['carrying']:
         block_position.setSFVec3f(grip_position());block.setVelocity([0]*6)
     elif tick%8==0:state['placed']=place_result()

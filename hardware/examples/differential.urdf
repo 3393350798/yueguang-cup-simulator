@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<robot name="MemberCar">
+  <link name="base_link">
+    <inertial><origin xyz="-0.01 0 0"/><mass value="0.6"/><inertia ixx="0.000652" iyy="0.001226" izz="0.001676" ixy="0" ixz="0" iyz="0"/></inertial>
+    <visual><geometry><box size="0.15 0.105 0.045"/></geometry><material name="body"><color rgba="0.08 0.35 0.48 1"/></material></visual>
+    <collision><geometry><box size="0.15 0.105 0.045"/></geometry></collision>
+  </link>
+  <link name="wheel_left">
+    <inertial><mass value="0.06"/><inertia ixx="0.000012" iyy="0.000022" izz="0.000012" ixy="0" ixz="0" iyz="0"/></inertial>
+    <visual><origin rpy="1.57079632679 0 0"/><geometry><cylinder radius="0.027" length="0.014"/></geometry><material name="tire"><color rgba="0.12 0.12 0.14 1"/></material></visual>
+    <collision><origin rpy="1.57079632679 0 0"/><geometry><cylinder radius="0.027" length="0.014"/></geometry></collision>
+  </link>
+  <joint name="drive_left" type="continuous"><parent link="base_link"/><child link="wheel_left"/><origin xyz="0 0.0625 -0.005"/><axis xyz="0 1 0"/><limit effort="0.12" velocity="9.26"/></joint>
+  <link name="wheel_right">
+    <inertial><mass value="0.06"/><inertia ixx="0.000012" iyy="0.000022" izz="0.000012" ixy="0" ixz="0" iyz="0"/></inertial>
+    <visual><origin rpy="1.57079632679 0 0"/><geometry><cylinder radius="0.027" length="0.014"/></geometry><material name="tire"/></visual>
+    <collision><origin rpy="1.57079632679 0 0"/><geometry><cylinder radius="0.027" length="0.014"/></geometry></collision>
+  </link>
+  <joint name="drive_right" type="continuous"><parent link="base_link"/><child link="wheel_right"/><origin xyz="0 -0.0625 -0.005"/><axis xyz="0 1 0"/><limit effort="0.12" velocity="9.26"/></joint>
+  <link name="rear_support">
+    <inertial><mass value="0.01"/><inertia ixx="0.000000676" iyy="0.000000676" izz="0.000000676" ixy="0" ixz="0" iyz="0"/></inertial>
+    <visual><geometry><sphere radius="0.013"/></geometry></visual>
+    <collision><geometry><sphere radius="0.013"/></geometry></collision>
+  </link>
+  <joint name="support_fixed" type="fixed"><parent link="base_link"/><child link="rear_support"/><origin xyz="-0.055 0 -0.019"/></joint>
+  <link name="tool">
+    <inertial><mass value="0.01"/><inertia ixx="0.000002" iyy="0.000002" izz="0.000002" ixy="0" ixz="0" iyz="0"/></inertial>
+    <visual><geometry><box size="0.04 0.04 0.008"/></geometry><material name="tool_color"><color rgba="0.98 0.59 0.18 1"/></material></visual>
+    <collision><geometry><box size="0.04 0.04 0.008"/></geometry></collision>
+  </link>
+  <joint name="tool_hinge" type="revolute"><parent link="base_link"/><child link="tool"/><origin xyz="0.1 0 0.02"/><axis xyz="0 0 1"/><limit lower="-0.5" upper="0.5" effort="0.05" velocity="2"/></joint>
+</robot>

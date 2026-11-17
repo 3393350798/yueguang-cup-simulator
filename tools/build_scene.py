@@ -3,6 +3,9 @@ from pathlib import Path
 import json
 import math
 from PIL import Image, ImageDraw, ImageFont
+from hardware_import import read_json
+from imported_robot import assembly, board_shape
+from competition_block import block_node
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / 'worlds' / 'textures'
@@ -13,6 +16,10 @@ robot = json.loads((ROOT/'robot.json').read_text(encoding='utf-8-sig'))
 body, wheels = robot['body'], robot['wheels']
 length, width, height = [body[k]/1000 for k in ('length_mm','width_mm','height_mm')]
 origin_z = body['clearance_mm']/1000 + height/2
+model = robot.get('model', {'kind': 'parametric'})
+if model['kind'] == 'urdf':
+    origin_z = model['origin_height_mm']/1000
+board = read_json(ROOT/'board.json')
 radius, wheel_width, track = [wheels[k]/1000 for k in ('radius_mm','width_mm','track_mm')]
 
 def meters(values):return [x/1000 for x in values]
@@ -51,11 +58,12 @@ for row, py in [('right',202-0.25/SCALE), ('left',202+0.25/SCALE)]:
         circles.append(dict(side=row,color=color,center=xy((px,py))))
 config = dict(floor_size=SIZE, line_width=0.0225, wheel_radius=radius,
               axle_length=track, body_size=[length,max(width,track+wheel_width)],
-              robot=robot, robot_origin_z=origin_z, start=xy((195,670)),
+              robot=robot, board=board, robot_origin_z=origin_z, start=xy((195,670)),
               finish=xy((195,190)), pickup=xy((632,202)), marker=xy((565,202)),
               tag=xy((715,141)), circles=circles,
               channel=[xy((363,475)),xy((519,594))],
               tag_family='tag36h11', tag_size=0.08,
+              block=dict(base_diameter_mm=56,top_diameter_mm=36,height_mm=70,base_height_mm=8,neck_height_mm=10,mass_kg=0.04),
               geometry_note='教学近似布局；以正式 DWG 更新坐标，标签/挡板布置为练习配置')
 (ROOT/'scene.json').write_text(json.dumps(config,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
 
@@ -133,17 +141,25 @@ tx,ty=config['tag']
 parts.append(f'''DEF TAG Solid {{ name "tag" translation {tx} {ty} 0.125 rotation 1 0 0 1.5707963
 children [ Shape {{ appearance PBRAppearance {{ baseColorMap DEF TAG_TEXTURE ImageTexture {{ url [ "textures/tag0.png" ] }} roughness 1 metalness 0 }} geometry Plane {{ size 0.1 0.1 }} }} ] }}''')
 bx,by=config['pickup']
-parts.append(f'''DEF BLOCK Solid {{ name "block" translation {bx} {by} 0.035
-children [ Shape {{ appearance DEF BLOCK_MATERIAL PBRAppearance {{ baseColor 0.9 0.05 0.08 roughness 0.7 metalness 0 }} geometry Cylinder {{ radius 0.028 height 0.07 }} }} ]
-boundingObject Cylinder {{ radius 0.028 height 0.07 }} physics Physics {{ density -1 mass 0.04 }}
-}}''')
+parts.append(block_node(bx,by))
 sx,sy=config['start']
+if model['kind'] == 'urdf':
+    parts[0] = parts[0].replace('#VRML_SIM R2025a utf8', '#VRML_SIM R2025a utf8\nEXTERNPROTO "../protos/imported/MemberRobot.proto"')
+    parts.append(assembly(robot, [sx,sy], origin_z, board))
+    (ROOT/'worlds'/'moonlight.wbt').write_text('\n'.join(parts)+'\n',encoding='utf-8')
+    print('Generated scene with member URDF assembly')
+    raise SystemExit(0)
+if model['kind'] == 'mesh':
+    chassis = f'''Shape {{ appearance {material('0.08 0.16 0.25')} geometry Mesh {{ url [ {json.dumps('../'+model['source'],ensure_ascii=False)} ] }} }}'''
+else:
+    chassis = f'''Shape {{ appearance {material('0.08 0.16 0.25')} geometry Box {{ size {v([length,width,height])} }} }}'''
 parts.append(f'''DEF CAR Robot {{ translation {sx} {sy} {origin_z}
 name "Moonlight" controller "moonlight" supervisor TRUE window "moonlight"
 children [
-Shape {{ appearance {material('0.08 0.16 0.25')} geometry Box {{ size {v([length,width,height])} }} }}
+{chassis}
 Transform {{ translation {-length*.1} 0 {height/2+.008} children [ Shape {{ appearance {material('0.1 0.68 0.63')} geometry Box {{ size {v([length*.5,width*.8,.016])} }} }} ] }}
 ''')
+parts.append(board_shape(board))
 g=robot['gripper'];reach=g['reach_mm']/1000;opening=g['opening_mm']/1000
 for position,size in [([(length/2+reach)/2,0,0],[reach-length/2,.012,.012]),
                       ([reach,0,0],[.008,opening+.008,.012]),

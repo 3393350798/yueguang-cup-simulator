@@ -1,0 +1,9 @@
+{
+  "mcu": "STM32F103C8T6",
+  "eda": "嘉立创EDA",
+  "netlist": null,
+  "mcu_reference": "",
+  "bindings": {},
+  "model": null,
+  "position_mm": [0, 0, 35]
+}

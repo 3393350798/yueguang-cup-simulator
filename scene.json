@@ -120,6 +120,19 @@
       "grab_distance_mm": 50
     }
   },
+  "board": {
+    "mcu": "STM32F103C8T6",
+    "eda": "嘉立创EDA",
+    "netlist": null,
+    "mcu_reference": "",
+    "bindings": {},
+    "model": null,
+    "position_mm": [
+      0,
+      0,
+      35
+    ]
+  },
   "robot_origin_z": 0.032,
   "start": [
     -0.65475,
@@ -203,5 +216,13 @@
   ],
   "tag_family": "tag36h11",
   "tag_size": 0.08,
+  "block": {
+    "base_diameter_mm": 56,
+    "top_diameter_mm": 36,
+    "height_mm": 70,
+    "base_height_mm": 8,
+    "neck_height_mm": 10,
+    "mass_kg": 0.04
+  },
   "geometry_note": "教学近似布局；以正式 DWG 更新坐标，标签/挡板布置为练习配置"
 }

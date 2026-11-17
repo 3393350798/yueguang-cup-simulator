@@ -4,6 +4,19 @@ const colors={red:'红色',yellow:'黄色',blue:'蓝色'};
 const hardware=config.robot;
 const deviceNames={front:'前距',left:'左距',right:'右距',rear:'后距'};
 $('hardware-summary').textContent=`${hardware.name} · 底盘 ${hardware.body.length_mm} × ${hardware.body.width_mm} mm · 轮径 ${hardware.wheels.radius_mm*2} mm · 轮距 ${hardware.wheels.track_mm} mm · 红外 ${hardware.ir.positions_mm.length} 路 · 超声波 ${hardware.sonar.sensors.length} 路 · 摄像头 ${hardware.camera.width} × ${hardware.camera.height}`;
+const model=hardware.model||{kind:'parametric'};
+$('hardware-summary').textContent+=' · '+({urdf:'URDF装配体',mesh:'导入底盘几何',parametric:'参数车模'}[model.kind]);
+$('board-summary').textContent=`${config.board.mcu} · ${config.board.netlist?'已导入网表':'未导入网表'} · ${Object.keys(config.board.bindings).length} 项引脚对应 · 固件执行后端尚未接入`;
+for(const joint of model.joints||[]){
+  if([model.left_joint,model.right_joint].includes(joint.name))continue;
+  $('joint-card').hidden=false;
+  const row=document.createElement('div'),label=document.createElement('label'),input=document.createElement('input'),button=document.createElement('button'),value=document.createElement('span');
+  label.textContent=joint.name+' ';input.type='number';input.value='0';input.step='0.05';input.style.width='85px';input.setAttribute('aria-label',joint.name+'目标位置');
+  if(joint.limits?.lower!==undefined)input.min=joint.limits.lower;
+  if(joint.limits?.upper!==undefined)input.max=joint.limits.upper;
+  button.textContent='设置';button.onclick=()=>send('joint',{name:joint.name,value:Number(input.value)});
+  value.id='joint-value-'+joint.name;label.append(input);row.append(label,button,value);$('joint-controls').append(row);
+}
 document.querySelector('.camera').style.aspectRatio=`${hardware.camera.width}/${hardware.camera.height}`;
 const help={manual:'按住方向按钮驾驶，松开停车。在 Webots 画面中也可使用 W/A/S/D，E 夹取/释放，空格停车。',member:'在 member_algorithm.py 中填写自己的算法。模板初始为停车，保存后点击重载算法。'};
 let state=null,path=[],socket=null,pending=[];
@@ -50,6 +63,7 @@ function render(data){
   for(const name of ['left','right'])$('wheel-'+name).textContent=(name==='left'?'左轮 ':'右轮 ')+data.sensors.speed[name].toFixed(3)+' m/s';
   $('collision').textContent=data.collision?'超声波区域有碰撞记录':'区域内无碰撞记录';
   $('collision').classList.toggle('warn',data.collision);
+  for(const [name,value] of Object.entries(data.sensors.joints||{}))$('joint-value-'+name).textContent=' 实测 '+value.toFixed(3);
   $('events').replaceChildren(...data.events.map(text=>{const li=document.createElement('li');li.textContent=text;return li;}));
   if(data.image){$('camera').src='data:image/jpeg;base64,'+data.image;$('camera').style.display='block';$('camera-empty').style.display='none';}
   if(!path.length||Math.hypot(data.pose[0]-path.at(-1)[0],data.pose[1]-path.at(-1)[1])>.006)path.push(data.pose);

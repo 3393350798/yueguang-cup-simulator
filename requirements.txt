@@ -1,3 +1,6 @@
 numpy>=1.26,<3
 opencv-contrib-python>=4.9,<5
 Pillow>=10.1
+urdf2webots==2025.0.0
+trimesh>=4.5,<6
+pycollada>=0.8,<1

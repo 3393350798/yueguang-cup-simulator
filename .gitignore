@@ -10,3 +10,5 @@ worlds/.*.wbproj
 .playwright-cli/
 conversation-notes.md
 /docs/验证记录.md
+/hardware/imported/
+/protos/imported/
