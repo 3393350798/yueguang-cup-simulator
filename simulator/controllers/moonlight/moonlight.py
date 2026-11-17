@@ -170,7 +170,7 @@ def receive(message):
         destination=ROOT/'output';destination.mkdir(exist_ok=True)
         raw=np.frombuffer(camera.getImage(),np.uint8).reshape((IMAGE_HEIGHT,IMAGE_WIDTH,4))[:,:,:3]
         cv2.imencode('.png',raw)[1].tofile(str(destination/f'camera-{tick}.png'))
-        log('摄像头原图已保存至 output 文件夹')
+        log('摄像头原图已保存至 simulator/output 文件夹')
     elif command=='channel':
         a,b=CONFIG['channel']
         translation.setSFVec3f([b[0]-CONFIG['body_size'][0]/2-.015,(a[1]+b[1])/2,Z])

@@ -106,7 +106,7 @@ def import_geometry(path, unit='mm'):
             from OCP.StlAPI import StlAPI_Writer
             from OCP.IFSelect import IFSelect_RetDone
         except ImportError as error:
-            raise RuntimeError('STEP导入需要先运行 setup-cad.bat 安装转换组件。') from error
+            raise RuntimeError('STEP导入需要先运行 scripts/setup-cad.bat 安装转换组件。') from error
         # OpenCascade文件接口使用英文中间路径。
         with tempfile.TemporaryDirectory(prefix='moonlight-step-') as temp:
             temporary = Path(temp)

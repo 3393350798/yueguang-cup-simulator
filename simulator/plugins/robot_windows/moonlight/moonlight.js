@@ -18,7 +18,7 @@ for(const joint of model.joints||[]){
   value.id='joint-value-'+joint.name;label.append(input);row.append(label,button,value);$('joint-controls').append(row);
 }
 document.querySelector('.camera').style.aspectRatio=`${hardware.camera.width}/${hardware.camera.height}`;
-const help={manual:'按住方向按钮驾驶，松开停车。在 Webots 画面中也可使用 W/A/S/D，E 夹取/释放，空格停车。',member:'在 member_algorithm.py 中填写自己的算法。模板初始为停车，保存后点击重载算法。',firmware:'先用 import-hardware.bat 导入固件并绑定管脚。点击开始后同步执行MCU；暂停冻结MCU，重置复位MCU。'};
+const help={manual:'按住方向按钮驾驶，松开停车。在 Webots 画面中也可使用 W/A/S/D，E 夹取/释放，空格停车。',member:'在 member_algorithm.py 中填写自己的算法。模板初始为停车，保存后点击重载算法。',firmware:'先用 scripts/import-hardware.bat 导入固件并绑定管脚。点击开始后同步执行MCU；暂停冻结MCU，重置复位MCU。'};
 $('uart-send').onclick=()=>{send('uart',{value:$('uart-input').value+'\n'});$('uart-input').value='';};
 let state=null,path=[],socket=null,pending=[];
 const image=new Image();

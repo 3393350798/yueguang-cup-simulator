@@ -15,13 +15,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def find_renode(setting=''):
     candidates = [setting, os.environ.get('RENODE', ''), shutil.which('Renode.exe'), shutil.which('renode')]
-    for folder in (ROOT/'.local/renode', ROOT.parent/'.local/renode', Path('C:/Program Files/Renode')):
+    for folder in (ROOT.parent/'.local/renode', ROOT.parent.parent/'.local/renode', Path('C:/Program Files/Renode')):
         if folder.is_dir():
             candidates.extend(folder.rglob('Renode.exe'))
     for item in candidates:
         if item and Path(item).is_file():
             return str(Path(item).resolve())
-    raise FileNotFoundError('请先运行 setup-firmware.bat，或在固件配置中选择 Renode.exe。')
+    raise FileNotFoundError('请先运行 scripts/setup-firmware.bat，或在固件配置中选择 Renode.exe。')
 
 
 class FirmwareBridge:
@@ -30,7 +30,7 @@ class FirmwareBridge:
         board = board or json.loads((ROOT/'board.json').read_text(encoding='utf-8-sig'))
         image = self.config.get('image')
         if not image:
-            raise ValueError('请在 import-hardware.bat 的固件页中导入 ELF / HEX / BIN。')
+            raise ValueError('请在 scripts/import-hardware.bat 的固件页中导入 ELF / HEX / BIN。')
         image = (ROOT/image).resolve()
         executable = find_renode(self.config.get('renode', ''))
         bindings = {role: resolve_pin(pin, board.get('mcu_reference', '')) for role, pin in board['bindings'].items()}

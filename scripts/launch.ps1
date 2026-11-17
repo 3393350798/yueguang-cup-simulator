@@ -1,16 +1,17 @@
 param([string]$WebotsHome = $env:WEBOTS_HOME)
 
-$project = Split-Path $PSScriptRoot -Parent
+$repository = Split-Path $PSScriptRoot -Parent
+$project = Join-Path $repository 'simulator'
 Set-Location -LiteralPath $project
-$env:PATH = (Join-Path $project '.venv\Scripts') + ';' + $env:PATH
-$env:YUEGUANG_PYTHON = Join-Path $project '.venv\Scripts\python.exe'
+$env:PATH = (Join-Path $repository '.venv\Scripts') + ';' + $env:PATH
+$env:YUEGUANG_PYTHON = Join-Path $repository '.venv\Scripts\python.exe'
 if (-not $WebotsHome) {
     $WebotsHome = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Webots_is1' -ErrorAction SilentlyContinue).InstallLocation
 }
 if (-not $WebotsHome) { $WebotsHome = 'C:\Program Files\Webots' }
 $executable = Join-Path $WebotsHome 'msys64\mingw64\bin\webots.exe'
 if (-not (Test-Path -LiteralPath $executable)) {
-    Write-Host 'Install Webots R2025a first, or run: powershell -File tools\launch.ps1 -WebotsHome "D:\Webots"'
+    Write-Host 'Install Webots R2025a first, or run: powershell -File scripts\launch.ps1 -WebotsHome "D:\Webots"'
     Read-Host 'Press Enter to close'
     exit 1
 }

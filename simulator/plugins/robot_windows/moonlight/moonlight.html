@@ -25,8 +25,8 @@
     <section class="card"><div class="section-head"><h2>车载摄像头</h2><button id="snapshot" class="small">保存原图</button></div><div class="camera"><img id="camera" alt="虚拟车载摄像头画面"><span id="camera-empty">等待摄像头画面</span></div><p class="hint">原始 BGR 摄像头图像，图像识别由会员自行编写。</p></section>
     <section class="card"><div class="section-head"><h2>传感器</h2><span class="mini">黑 0 / 白 1</span></div><div id="ir" class="ir"></div><div id="sonars" class="sonars"></div><div class="wheel"><span id="wheel-left">左轮 0.000 m/s</span><span id="wheel-right">右轮 0.000 m/s</span></div><span id="collision" class="badge">区域内无碰撞记录</span></section>
     <section class="card" id="joint-card" hidden><h2>装配体关节</h2><div id="joint-controls"></div><p class="hint">旋转关节使用rad，移动关节使用m；填写目标位置后点击设置。</p></section>
-    <section class="card"><h2>当前小车硬件</h2><p id="hardware-summary"></p><p id="board-summary"></p><p>关闭 Webots 后，双击 import-hardware.bat 导入模型和嘉立创EDA网表；configure.bat 可编辑尺寸、传感器。保存后重新运行 start.bat。</p></section>
-    <section class="card learn"><h2>开始写自己的算法</h2><p>打开 <code>controllers/moonlight/member_algorithm.py</code>，修改 <code>vision()</code> 和 <code>step()</code>。保存后选择「会员算法」，点击「重载算法」。</p><p>输入：图像、红外、距离、编码器。<br>输出：左右轮速度、夹取或释放。</p></section>
+    <section class="card"><h2>当前小车硬件</h2><p id="hardware-summary"></p><p id="board-summary"></p><p>关闭 Webots 后，双击 scripts/import-hardware.bat 导入模型和嘉立创EDA网表；scripts/configure.bat 可编辑尺寸、传感器。保存后重新运行 start.bat。</p></section>
+    <section class="card learn"><h2>开始写自己的算法</h2><p>打开 <code>simulator/controllers/moonlight/member_algorithm.py</code>，修改 <code>vision()</code> 和 <code>step()</code>。保存后选择「会员算法」，点击「重载算法」。</p><p>输入：图像、红外、距离、编码器。<br>输出：左右轮速度、夹取或释放。</p></section>
   </aside>
 </main>
 <footer>月光杯会员练习环境 · 简化电机与夹取模型 · 规则与几何参数见项目说明</footer>

@@ -187,7 +187,7 @@ class HardwareEditor:
         self.field(form, 4, '左右电机正向系数', ','.join(map(str,self.firmware['motor_signs'])), 'motor_signs')
         self.field(form, 5, '视觉与调试串口', self.firmware['vision_uart'], 'vision_uart', ['usart1','usart2','usart3'])
         self.field(form, 6, 'CPU虚拟指令率（MIPS）', self.firmware.get('cpu_mips',8), 'cpu_mips')
-        ttk.Label(f, text='先运行 setup-firmware.bat 安装固件后端；导入自己的已编译固件并在接线页绑定管脚。\n保存后启动场景，选择「STM32固件」并点击开始。重置场景会同时复位MCU。\n支持：TIM1～4 PWM1/PWM2、双方向电机驱动、AB编码器、GPIO红外、ADC1轮询、HC-SR04触发/回波、USART。\n时钟采用固定72MHz配置；ADC为即时转换模型。DMA、USB、I2C/SPI器件与任意整板电路需另行适配。\n固件只保存在本机 hardware/imported/；源工程请先在Keil/CubeIDE中编译。详细接线及限制见 docs/固件执行.md。', wraplength=870).pack(anchor='w', pady=20)
+        ttk.Label(f, text='先运行 scripts/setup-firmware.bat 安装固件后端；导入自己的已编译固件并在接线页绑定管脚。\n保存后启动场景，选择「STM32固件」并点击开始。重置场景会同时复位MCU。\n支持：TIM1～4 PWM1/PWM2、双方向电机驱动、AB编码器、GPIO红外、ADC1轮询、HC-SR04触发/回波、USART。\n时钟采用固定72MHz配置；ADC为即时转换模型。DMA、USB、I2C/SPI器件与任意整板电路需另行适配。\n固件只保存在本机 simulator/hardware/imported/；源工程请先在Keil/CubeIDE中编译。详细接线及限制见 docs/固件执行.md。', wraplength=870).pack(anchor='w', pady=20)
 
     def choose_firmware(self):
         path = filedialog.askopenfilename(filetypes=[('已编译STM32固件','*.elf *.axf *.hex *.bin')])
