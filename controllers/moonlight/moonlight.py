@@ -18,6 +18,8 @@ import cv2
 import numpy as np
 
 ROOT=Path(__file__).resolve().parents[2]
+sys.path.insert(0,str(ROOT/'tools'))
+from firmware_bridge import FirmwareBridge
 CONFIG=json.loads((ROOT/'scene.json').read_text(encoding='utf-8'))
 DT=0.032
 R=CONFIG['wheel_radius']
@@ -69,6 +71,9 @@ actuated=[0.0,0.0]
 last_encoder=[0.0,0.0]
 still=0.0
 algorithm=None
+firmware=None
+firmware_status={}
+pending_uart=''
 last_image=None
 tick=0
 last_collision_time=-10
@@ -111,7 +116,9 @@ def gripper(action):
         log('已释放：'+('目标圈正确' if state['placed'] and state['placed']['correct'] else '可查看最终放置位置'))
 
 def reset(group=None,color=None):
-    global still,last_encoder,algorithm
+    global still,last_encoder,algorithm,firmware,firmware_status,pending_uart
+    if firmware:firmware.close()
+    firmware=None;firmware_status={};pending_uart=''
     if group is not None:state['group']=max(1,int(group))
     if color in ('red','yellow','blue'):state['color']=color
     translation.setSFVec3f(CONFIG['start']+[Z])
@@ -125,24 +132,34 @@ def reset(group=None,color=None):
     state.update(running=False,carrying=False,elapsed=0,collision=False,grasped=False,
                  placed=None,parked=False,aligned=False,events=[],message='场景已重置')
     still=0
-    if state['mode']=='member':
+    if state['mode'] in ('member','firmware'):
         algorithm=load_algorithm()
 
 def receive(message):
-    global algorithm
+    global algorithm,firmware,firmware_status,pending_uart
     data=json.loads(message)
     command=data.get('command')
-    if command=='start':state['running']=True
+    if command=='start':
+        if state['mode']=='firmware' and firmware is None:
+            firmware=FirmwareBridge()
+            log('STM32固件已加载，开始同步执行')
+        state['running']=True
     elif command=='pause':state['running']=False;manual[:]=[0,0]
     elif command=='reset':reset(data.get('group'),data.get('color'))
     elif command=='mode':
+        if firmware:firmware.close()
+        firmware=None;firmware_status={};pending_uart=''
         state['mode']=data['value'];state['running']=False;manual[:]=[0,0]
-        if state['mode']=='member':
+        if state['mode'] in ('member','firmware'):
             algorithm=load_algorithm()
         log('模式已切换，点击开始运行')
     elif command=='reload':
         algorithm=load_algorithm()
-        log('算法已重载；状态已重新初始化')
+        if firmware:firmware.close()
+        firmware=None;firmware_status={};pending_uart=''
+        state['running']=False
+        log('程序已重载；点击开始运行，固件将从复位状态执行')
+    elif command=='uart':pending_uart+=str(data['value'])
     elif command=='drive':
         manual[:]=data['value'];state['running']=True;state['mode']='manual'
     elif command=='gripper':gripper(data['value'])
@@ -205,12 +222,20 @@ while sim.step(32)!=-1:
         state['elapsed']+=DT
         try:
             if state['mode']=='manual':command=dict(zip(('left','right'),manual))
+            elif state['mode']=='firmware':
+                if tick%6==0:
+                    sensors['vision']=algorithm.vision(image)
+                    pending_uart+=sensors['vision'].get('uart_tx','')
+                firmware_status=firmware.step(sensors,DT,pending_uart)
+                pending_uart=''
+                command={side:firmware_status[side]*MAX_SPEED for side in ('left','right')}
+                command['gripper']=firmware_status.get('gripper')
             elif algorithm:
                 sensors['vision']=algorithm.vision(image)
                 command=algorithm.step(sensors,DT)
             gripper(command.get('gripper'))
         except Exception as error:
-            state['running']=False;log(f'算法错误，已停车：{error}');traceback.print_exc()
+            state['running']=False;log(f'程序错误，已停车：{error}');traceback.print_exc()
     for i,name in enumerate(('left','right')):
         target=max(-MAX_SPEED,min(MAX_SPEED,float(command.get(name,0)))) if state['running'] else 0
         actuated[i]+=(target-actuated[i])*DT/(HW['wheels']['response_s']+DT)
@@ -245,7 +270,7 @@ while sim.step(32)!=-1:
                 log('超声波区域发生接触');last_collision_time=state['elapsed']
             break
     if tick%6==0:
-        payload=dict(state,sensors=sensors,pose=p,image=last_image,
+        payload=dict(state,sensors=sensors,pose=p,image=last_image,firmware=firmware_status,
                      target_side='left' if state['group']%2==0 else 'right')
         sim.wwiSendText(json.dumps(payload,ensure_ascii=True,separators=(',',':')))
     if capture and tick==30:
@@ -257,4 +282,6 @@ while sim.step(32)!=-1:
         if capture:
             (Path(capture)/'result.json').write_text(json.dumps(dict(state,pose=pose()),ensure_ascii=False,indent=2),encoding='utf-8')
         sim.simulationQuit(0)
+
+if firmware:firmware.close()
 

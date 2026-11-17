@@ -1,0 +1,112 @@
+// STM32F103C8T6 co-simulation profile, based on Renode's MIT-licensed F103 platform.
+// https://github.com/renode/renode/blob/v1.17.0/platforms/cpus/stm32f103.repl
+flash: Memory.MappedMemory @ { sysbus 0x08000000; sysbus 0x00000000 }
+    size: 0x10000
+sram: Memory.MappedMemory @ sysbus 0x20000000
+    size: 0x5000
+// Preserve FLASH_ACR latency/prefetch writes used during clock initialization.
+// Flash erase/programming is outside this execution profile.
+flashControl: Memory.ArrayMemory @ sysbus 0x40022000
+    size: 0x400
+nvic: IRQControllers.NVIC @ sysbus 0xE000E000
+    priorityMask: 0xF0
+    systickFrequency: 72000000
+    IRQ -> cpu@0
+cpu: CPU.CortexM @ sysbus
+    cpuType: "cortex-m3"
+    nvic: nvic
+    PerformanceInMips: 8
+usart1: UART.STM32_UART @ sysbus <0x40013800, +0x100>
+    -> nvic@37
+usart2: UART.STM32_UART @ sysbus <0x40004400, +0x100>
+    -> nvic@38
+usart3: UART.STM32_UART @ sysbus <0x40004800, +0x100>
+    -> nvic@39
+exti: IRQControllers.STM32F4_EXTI @ sysbus 0x40010400
+    numberOfOutputLines: 19
+    [0-4] -> nvic@[6-10]
+    [5-9] -> nvicInput23@[0-4]
+    [10-15] -> nvicInput40@[0-5]
+nvicInput23: Miscellaneous.CombinedInput @ none
+    numberOfInputs: 5
+    -> nvic@23
+nvicInput40: Miscellaneous.CombinedInput @ none
+    numberOfInputs: 6
+    -> nvic@40
+gpioPortA: GPIOPort.STM32F1GPIOPort @ sysbus <0x40010800, +0x400>
+    0 -> timer2@0
+    1 -> timer2@1
+    2 -> timer2@2
+    3 -> timer2@3
+    6 -> timer3@0
+    7 -> timer3@1
+    8 -> timer1@0
+    9 -> timer1@1
+    10 -> timer1@2
+    11 -> timer1@3
+    15 -> timer2@0
+gpioPortB: GPIOPort.STM32F1GPIOPort @ sysbus <0x40010C00, +0x400>
+    0 -> timer3@2
+    1 -> timer3@3
+    3 -> timer2@1
+    4 -> timer3@0
+    5 -> timer3@1
+    6 -> timer4@0
+    7 -> timer4@1
+    8 -> timer4@2
+    9 -> timer4@3
+    10 -> timer2@2
+    11 -> timer2@3
+gpioPortC: GPIOPort.STM32F1GPIOPort @ sysbus <0x40011000, +0x400>
+gpioPortD: GPIOPort.STM32F1GPIOPort @ sysbus <0x40011400, +0x400>
+// The generic AFIO model requires seven port objects; E/F/G are not mapped on C8.
+gpioPortE: GPIOPort.STM32F1GPIOPort @ none
+gpioPortF: GPIOPort.STM32F1GPIOPort @ none
+gpioPortG: GPIOPort.STM32F1GPIOPort @ none
+afio: GPIOPort.STM32F1AFIO @ sysbus 0x40010000
+    gpioPorts: [gpioPortA, gpioPortB, gpioPortC, gpioPortD, gpioPortE, gpioPortF, gpioPortG]
+    [0-15] -> exti@[0-15]
+timer1: Timers.MoonlightSTM32Timer @ sysbus 0x40012C00
+    BreakInterrupt -> nvic@24
+    UpdateInterrupt -> nvic@25
+    TriggerInterrupt -> nvic@26
+    CommutationInterrupt -> nvic@26
+    CaptureCompareInterrupt -> nvic@27
+    frequency: 72000000
+    initialLimit: 0xFFFF
+    0 -> gpioPortA#08@1
+    1 -> gpioPortA#09@1
+    2 -> gpioPortA#10@1
+    3 -> gpioPortA#11@1
+timer2: Timers.MoonlightSTM32Timer @ sysbus 0x40000000
+    IRQ -> nvic@28
+    frequency: 72000000
+    initialLimit: 0xFFFF
+    0 -> gpioPortA#00@2 | gpioPortA#15@2
+    1 -> gpioPortA#01@2 | gpioPortB#03@2
+    2 -> gpioPortA#02@2 | gpioPortB#10@2
+    3 -> gpioPortA#03@2 | gpioPortB#11@2
+timer3: Timers.MoonlightSTM32Timer @ sysbus 0x40000400
+    IRQ -> nvic@29
+    frequency: 72000000
+    initialLimit: 0xFFFF
+    0 -> gpioPortA#06@3 | gpioPortB#04@3
+    1 -> gpioPortA#07@3 | gpioPortB#05@3
+    2 -> gpioPortB#00@3
+    3 -> gpioPortB#01@3
+timer4: Timers.MoonlightSTM32Timer @ sysbus 0x40000800
+    IRQ -> nvic@30
+    frequency: 72000000
+    initialLimit: 0xFFFF
+    0 -> gpioPortB#06@4
+    1 -> gpioPortB#07@4
+    2 -> gpioPortB#08@4
+    3 -> gpioPortB#09@4
+rcc: Python.PythonPeripheral @ sysbus 0x40021000
+    size: 0x400
+    initable: true
+    filename: "rcc.py"
+adc1: Python.PythonPeripheral @ sysbus 0x40012400
+    size: 0x100
+    initable: true
+    filename: "adc.py"

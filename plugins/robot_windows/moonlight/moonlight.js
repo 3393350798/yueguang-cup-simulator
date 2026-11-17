@@ -6,7 +6,7 @@ const deviceNames={front:'前距',left:'左距',right:'右距',rear:'后距'};
 $('hardware-summary').textContent=`${hardware.name} · 底盘 ${hardware.body.length_mm} × ${hardware.body.width_mm} mm · 轮径 ${hardware.wheels.radius_mm*2} mm · 轮距 ${hardware.wheels.track_mm} mm · 红外 ${hardware.ir.positions_mm.length} 路 · 超声波 ${hardware.sonar.sensors.length} 路 · 摄像头 ${hardware.camera.width} × ${hardware.camera.height}`;
 const model=hardware.model||{kind:'parametric'};
 $('hardware-summary').textContent+=' · '+({urdf:'URDF装配体',mesh:'导入底盘几何',parametric:'参数车模'}[model.kind]);
-$('board-summary').textContent=`${config.board.mcu} · ${config.board.netlist?'已导入网表':'未导入网表'} · ${Object.keys(config.board.bindings).length} 项引脚对应 · 固件执行后端尚未接入`;
+$('board-summary').textContent=`${config.board.mcu} · ${config.board.netlist?'已导入网表':'未导入网表'} · ${Object.keys(config.board.bindings).length} 项引脚对应 · 支持Renode固件模式`;
 for(const joint of model.joints||[]){
   if([model.left_joint,model.right_joint].includes(joint.name))continue;
   $('joint-card').hidden=false;
@@ -18,7 +18,8 @@ for(const joint of model.joints||[]){
   value.id='joint-value-'+joint.name;label.append(input);row.append(label,button,value);$('joint-controls').append(row);
 }
 document.querySelector('.camera').style.aspectRatio=`${hardware.camera.width}/${hardware.camera.height}`;
-const help={manual:'按住方向按钮驾驶，松开停车。在 Webots 画面中也可使用 W/A/S/D，E 夹取/释放，空格停车。',member:'在 member_algorithm.py 中填写自己的算法。模板初始为停车，保存后点击重载算法。'};
+const help={manual:'按住方向按钮驾驶，松开停车。在 Webots 画面中也可使用 W/A/S/D，E 夹取/释放，空格停车。',member:'在 member_algorithm.py 中填写自己的算法。模板初始为停车，保存后点击重载算法。',firmware:'先用 import-hardware.bat 导入固件并绑定管脚。点击开始后同步执行MCU；暂停冻结MCU，重置复位MCU。'};
+$('uart-send').onclick=()=>{send('uart',{value:$('uart-input').value+'\n'});$('uart-input').value='';};
 let state=null,path=[],socket=null,pending=[];
 const image=new Image();
 const base=new URL('track.png',location.href);
@@ -54,6 +55,11 @@ function render(data){
   $('message').textContent=data.message;
   $('mode').value=data.mode;
   $('mode-help').textContent=help[data.mode];
+  $('reload').textContent=data.mode==='firmware'?'重载固件与视觉':'重载算法';
+  $('firmware-card').hidden=data.mode!=='firmware';
+  const fw=data.firmware||{};
+  $('firmware-status').textContent=fw.pc?`PC ${fw.pc} · MCU ${fw.virtual_s.toFixed(3)} s · PWM 左 ${fw.left.toFixed(3)} / 右 ${fw.right.toFixed(3)} · 超声触发 ${fw.sonar_triggers}`:'点击开始加载固件';
+  $('uart-output').textContent=fw.uart_text||'';
   $('target').textContent=(data.target_side==='left'?'左侧':'右侧')+' · '+colors[data.color];
   $('grasp').textContent=data.carrying?'夹持中':data.grasped?'已完成':'等待';
   $('placed').textContent=data.placed?(data.placed.correct?'正确目标圈':'其他放置圈')+` / ${data.placed.offset_mm} mm`:'尚未进圈';

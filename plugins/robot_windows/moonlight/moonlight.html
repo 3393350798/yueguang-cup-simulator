@@ -7,7 +7,7 @@
   <section class="workspace">
     <div class="section-head"><h2>赛场与轨迹</h2><span id="timer">00:00.0</span></div>
     <div class="map-wrap"><canvas id="map" width="720" height="720"></canvas><span class="map-note">教学近似布局 · 原始传感器与图像</span></div>
-    <div class="toolbar"><button id="start" class="primary">开始运行</button><button id="pause">暂停 / 停车</button><button id="reset">重置场景</button><button id="reload">重载算法</button></div>
+    <div class="toolbar"><button id="start" class="primary">开始运行</button><button id="pause">暂停 / 停车</button><button id="reset">重置场景</button><button id="reload">重载程序</button></div>
     <p id="message" role="status">先选择模式，再点击开始。会员模板初始为停车。</p>
     <div class="settings"><label>组号 <input id="group" type="number" min="1" value="2"></label><label>物块 <select id="color"><option value="red">红色</option><option value="yellow">黄色</option><option value="blue">蓝色</option></select></label><span>修改后点击「重置场景」</span></div>
     <div class="task-grid"><div><span>指定位置</span><strong id="target">左侧 · 红色</strong></div><div><span>抓取</span><strong id="grasp">等待</strong></div><div><span>放置结果</span><strong id="placed">等待</strong></div><div><span>终点停车</span><strong id="parking">等待</strong></div></div>
@@ -15,12 +15,13 @@
   </section>
   <aside>
     <section class="card"><div class="section-head"><h2>控制方式</h2><span class="mini">32 ms / 周期</span></div>
-      <select id="mode"><option value="manual">手动探索</option><option value="member">会员算法 · member_algorithm.py</option></select>
+      <select id="mode"><option value="manual">手动探索</option><option value="member">会员算法 · member_algorithm.py</option><option value="firmware">STM32固件 · Renode</option></select>
       <p id="mode-help">按住方向键按钮驾驶，松开停车。也可在 Webots 画面中使用 W/A/S/D。</p>
       <div class="drive"><button data-drive="0.12,0.12" aria-label="前进">↑</button><div><button data-drive="-0.07,0.07" aria-label="左转">↶</button><button data-drive="-0.1,-0.1" aria-label="后退">↓</button><button data-drive="0.07,-0.07" aria-label="右转">↷</button></div></div>
       <div class="two"><button id="grab">夹取</button><button id="release">释放</button></div>
       <button id="channel" class="text-button">放到超声波区域入口 →</button>
     </section>
+    <section class="card" id="firmware-card" hidden><h2>STM32 固件执行</h2><p id="firmware-status">点击开始加载固件</p><pre id="uart-output" style="white-space:pre-wrap;max-height:180px;overflow:auto"></pre><div class="two"><input id="uart-input" aria-label="发送到MCU串口的文本" placeholder="原始串口文本"><button id="uart-send">发送＋换行</button></div><p class="hint">串口协议由会员定义；电脑视觉可通过 vision() 返回 uart_tx 文本。</p></section>
     <section class="card"><div class="section-head"><h2>车载摄像头</h2><button id="snapshot" class="small">保存原图</button></div><div class="camera"><img id="camera" alt="虚拟车载摄像头画面"><span id="camera-empty">等待摄像头画面</span></div><p class="hint">原始 BGR 摄像头图像，图像识别由会员自行编写。</p></section>
     <section class="card"><div class="section-head"><h2>传感器</h2><span class="mini">黑 0 / 白 1</span></div><div id="ir" class="ir"></div><div id="sonars" class="sonars"></div><div class="wheel"><span id="wheel-left">左轮 0.000 m/s</span><span id="wheel-right">右轮 0.000 m/s</span></div><span id="collision" class="badge">区域内无碰撞记录</span></section>
     <section class="card" id="joint-card" hidden><h2>装配体关节</h2><div id="joint-controls"></div><p class="hint">旋转关节使用rad，移动关节使用m；填写目标位置后点击设置。</p></section>

@@ -1,0 +1,13 @@
+{
+  "image": null,
+  "renode": "",
+  "bin_address": "0x08000000",
+  "encoder_cpr": 1560,
+  "ir_threshold": 0.5,
+  "motor_signs": [
+    1,
+    1
+  ],
+  "vision_uart": "usart1",
+  "cpu_mips": 8
+}

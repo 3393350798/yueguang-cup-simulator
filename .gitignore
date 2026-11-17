@@ -12,3 +12,7 @@ conversation-notes.md
 /docs/验证记录.md
 /hardware/imported/
 /protos/imported/
+*.elf
+*.axf
+*.hex
+*.bin

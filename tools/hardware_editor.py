@@ -2,6 +2,9 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from hardware_import import ROOT, import_geometry, import_netlist, import_urdf, read_json, write_json
+from hardware_import import destination, relative
+import shutil
+from pathlib import Path
 
 
 class HardwareEditor:
@@ -11,6 +14,7 @@ class HardwareEditor:
         window.geometry('960x780')
         self.robot = read_json(ROOT/'robot.json')
         self.board = read_json(ROOT/'board.json')
+        self.firmware = read_json(ROOT/'firmware.json')
         self.model = self.robot.get('model', {'kind': 'parametric'})
         self.fields = {}
         self.status = tk.StringVar(value='关闭 Webots 后配置；保存后运行 start.bat。')
@@ -20,10 +24,13 @@ class HardwareEditor:
         tabs.pack(fill='both', expand=True, padx=16, pady=12)
         self.mechanical = ttk.Frame(tabs, padding=12)
         self.electronic = ttk.Frame(tabs, padding=12)
+        self.firmware_frame = ttk.Frame(tabs, padding=12)
         tabs.add(self.mechanical, text='机械模型与驱动')
         tabs.add(self.electronic, text='嘉立创EDA · STM32F103C8T6')
+        tabs.add(self.firmware_frame, text='固件执行 · Renode')
         self.mechanical_tab()
         self.board_tab()
+        self.firmware_tab()
         ttk.Label(window, textvariable=self.status, wraplength=910).pack(anchor='w', padx=20, pady=4)
         ttk.Button(window, text='保存配置', command=self.save).pack(anchor='e', padx=20, pady=(0, 16))
 
@@ -128,7 +135,7 @@ class HardwareEditor:
         self.bindings = tk.Text(form, height=10, font=('Consolas', 10))
         self.bindings.grid(row=2, column=1, sticky='ew', padx=(12, 0))
         self.bindings.insert('1.0', '\n'.join(f'{role}={pin}' for role, pin in self.board.get('bindings', {}).items()))
-        ttk.Label(f, text='填写格式：设备=器件.引脚，例如 left_pwm=U1.10。这里只记录接线，具体PWM复用由固件配置。\n设备可用：left_pwm / left_in1 / left_in2 / right_pwm / right_in1 / right_in2、encoder_left_a/b、ir0…、sonar_front_trig/echo、vision_tx/rx。\n网表提供电气连接。板卡三维模型用于安装外观。当前固件执行后端尚未接入，保存配置不会运行HEX/ELF。', wraplength=870).pack(anchor='w', pady=6)
+        ttk.Label(f, text='填写格式：设备=器件.引脚（如 left_pwm=U1.10），或直接填 left_pwm=PA0。PWM复用由固件配置。\n设备：left_pwm / left_in1 / left_in2 / right_pwm / right_in1 / right_in2、encoder_left_a/b、encoder_right_a/b、ir0…、sonar_front_trig/echo（front可换成left/right）、gripper_close。\n固件页选择USART端口。网表提供接线资料；板卡三维模型用于安装外观。', wraplength=870).pack(anchor='w', pady=6)
         self.refresh_board()
 
     def refresh_board(self):
@@ -162,6 +169,40 @@ class HardwareEditor:
         self.board['model'] = None
         self.refresh_board()
 
+    def firmware_tab(self):
+        f = self.firmware_frame
+        bar = ttk.Frame(f)
+        bar.pack(fill='x')
+        ttk.Button(bar, text='导入 ELF / AXF / HEX / BIN', command=lambda: self.action(self.choose_firmware)).pack(side='left')
+        ttk.Button(bar, text='选择 Renode.exe', command=self.choose_renode).pack(side='left', padx=8)
+        self.firmware_info = tk.StringVar(value='当前固件：'+str(self.firmware['image'] or '尚未导入'))
+        ttk.Label(f, textvariable=self.firmware_info, wraplength=870).pack(anchor='w', pady=14)
+        form = ttk.Frame(f)
+        form.pack(fill='x')
+        form.columnconfigure(1, weight=1)
+        self.field(form, 0, 'Renode路径（留空自动查找）', self.firmware['renode'], 'renode')
+        self.field(form, 1, 'BIN加载地址', self.firmware['bin_address'], 'bin_address')
+        self.field(form, 2, '编码器每轮一圈计数（四倍频后）', self.firmware['encoder_cpr'], 'encoder_cpr')
+        self.field(form, 3, '数字红外黑白阈值（0～1）', self.firmware['ir_threshold'], 'ir_threshold')
+        self.field(form, 4, '左右电机正向系数', ','.join(map(str,self.firmware['motor_signs'])), 'motor_signs')
+        self.field(form, 5, '视觉与调试串口', self.firmware['vision_uart'], 'vision_uart', ['usart1','usart2','usart3'])
+        self.field(form, 6, 'CPU虚拟指令率（MIPS）', self.firmware.get('cpu_mips',8), 'cpu_mips')
+        ttk.Label(f, text='先运行 setup-firmware.bat 安装固件后端；导入自己的已编译固件并在接线页绑定管脚。\n保存后启动场景，选择「STM32固件」并点击开始。重置场景会同时复位MCU。\n支持：TIM1～4 PWM1/PWM2、双方向电机驱动、AB编码器、GPIO红外、ADC1轮询、HC-SR04触发/回波、USART。\n时钟采用固定72MHz配置；ADC为即时转换模型。DMA、USB、I2C/SPI器件与任意整板电路需另行适配。\n固件只保存在本机 hardware/imported/；源工程请先在Keil/CubeIDE中编译。详细接线及限制见 docs/固件执行.md。', wraplength=870).pack(anchor='w', pady=20)
+
+    def choose_firmware(self):
+        path = filedialog.askopenfilename(filetypes=[('已编译STM32固件','*.elf *.axf *.hex *.bin')])
+        if path:
+            target = destination('firmware')/('member'+Path(path).suffix.lower())
+            shutil.copyfile(path,target)
+            self.firmware['image'] = relative(target)
+            self.firmware_info.set('当前固件：'+self.firmware['image'])
+            self.status.set('固件已复制到本机导入目录；请配置引脚并保存。')
+
+    def choose_renode(self):
+        path = filedialog.askopenfilename(filetypes=[('Renode后端','renode.exe')])
+        if path:
+            self.fields['renode'].set(path)
+
     def save(self):
         self.action(self.save_files)
 
@@ -192,9 +233,19 @@ class HardwareEditor:
         self.robot['body'].update(dict(zip(('length_mm', 'width_mm', 'height_mm'), dimensions)))
         self.robot['wheels'].update(radius_mm=wheels[0], track_mm=wheels[1])
         self.board.update(mcu_reference=self.fields['mcu'].get(), bindings=bindings, position_mm=position)
+        from firmware.pins import resolve_pin
+        for pin in bindings.values():
+            resolve_pin(pin, self.board['mcu_reference'])
+        self.firmware.update(renode=self.fields['renode'].get(), bin_address=self.fields['bin_address'].get(),
+            encoder_cpr=int(self.fields['encoder_cpr'].get()), ir_threshold=float(self.fields['ir_threshold'].get()),
+            cpu_mips=float(self.fields['cpu_mips'].get()),
+            motor_signs=[int(v) for v in self.fields['motor_signs'].get().split(',')], vision_uart=self.fields['vision_uart'].get())
+        if self.firmware['cpu_mips'] <= 0 or self.firmware['encoder_cpr'] <= 0 or len(self.firmware['motor_signs']) != 2 or any(v not in (-1,1) for v in self.firmware['motor_signs']) or not 0 <= self.firmware['ir_threshold'] <= 1:
+            raise ValueError('编码器计数应大于0，正向系数为1或-1，红外阈值在0～1之间。')
         write_json(ROOT/'robot.json', self.robot)
         write_json(ROOT/'board.json', self.board)
-        self.status.set('已保存 robot.json 与 board.json。重新运行 start.bat 加载模型。')
+        write_json(ROOT/'firmware.json', self.firmware)
+        self.status.set('已保存小车、板卡与固件配置。重新运行 start.bat 生效。')
 
 
 if __name__ == '__main__':
