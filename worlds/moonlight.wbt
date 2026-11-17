@@ -1,0 +1,63 @@
+#VRML_SIM R2025a utf8
+WorldInfo { basicTimeStep 32 coordinateSystem "ENU" contactProperties [ ContactProperties { material1 "wheel" coulombFriction [ 1 ] bumpSound "" rollSound "" slideSound "" } ContactProperties { bumpSound "" rollSound "" slideSound "" } ] }
+Viewpoint { orientation -0.57735027 0.57735027 0.57735027 2.0943951 position 0 0 6.1 fieldOfView 0.7 }
+Background { skyColor [ 0.91 0.94 0.97 ] }
+DirectionalLight { direction -0.3 -0.4 -1 intensity 1.3 ambientIntensity 0.65 castShadows TRUE }
+DEF FLOOR Solid {
+  translation 0 0 -0.005
+  children [ Shape { appearance PBRAppearance {
+    baseColorMap ImageTexture { url [ "textures/track.png" ] filtering 5 }
+    roughness 1 metalness 0
+  } geometry Plane { size 2 2 } } ]
+  boundingObject Plane { size 2 2 }
+}
+
+DEF WALL_0 Solid { name "WALL_0" translation 0.00945 -0.4893 0.065 rotation 0 0 1 0
+children [ Shape { appearance PBRAppearance { baseColor 0.34 0.42 0.54 roughness 0.85 metalness 0 } geometry DEF WALL_0_GEOM Box { size 0.4212 0.012 0.14 } } ]
+boundingObject USE WALL_0_GEOM
+}
+DEF WALL_1 Solid { name "WALL_1" translation 0.00945 -0.156 0.065 rotation 0 0 1 0
+children [ Shape { appearance PBRAppearance { baseColor 0.34 0.42 0.54 roughness 0.85 metalness 0 } geometry DEF WALL_1_GEOM Box { size 0.4212 0.012 0.14 } } ]
+boundingObject USE WALL_1_GEOM
+}
+DEF TAG Solid { name "tag" translation 0.7492500000000001 0.7398 0.125 rotation 1 0 0 1.5707963
+children [ Shape { appearance PBRAppearance { baseColorMap DEF TAG_TEXTURE ImageTexture { url [ "textures/tag0.png" ] } roughness 1 metalness 0 } geometry Plane { size 0.1 0.1 } } ] }
+DEF BLOCK Solid { name "block" translation 0.52515 0.5751000000000001 0.035
+children [ Shape { appearance DEF BLOCK_MATERIAL PBRAppearance { baseColor 0.9 0.05 0.08 roughness 0.7 metalness 0 } geometry Cylinder { radius 0.028 height 0.07 } } ]
+boundingObject Cylinder { radius 0.028 height 0.07 } physics Physics { density -1 mass 0.04 }
+}
+DEF CAR Robot { translation -0.65475 -0.6885 0.032
+name "Moonlight" controller "moonlight" supervisor TRUE window "moonlight"
+children [
+Shape { appearance PBRAppearance { baseColor 0.08 0.16 0.25 roughness 0.85 metalness 0 } geometry Box { size 0.15 0.105 0.045 } }
+Transform { translation -0.015 0 0.034 children [ Shape { appearance PBRAppearance { baseColor 0.1 0.68 0.63 roughness 0.85 metalness 0 } geometry Box { size 0.075 0.085 0.022 } } ] }
+Transform { translation 0.095 0 0 children [ Shape { appearance PBRAppearance { baseColor 0.98 0.59 0.18 roughness 0.85 metalness 0 } geometry Box { size 0.06 0.012 0.012 } } ] }
+Transform { translation 0.12 0.028 0 children [ Shape { appearance PBRAppearance { baseColor 0.98 0.59 0.18 roughness 0.85 metalness 0 } geometry Box { size 0.012 0.055 0.018 } } ] }
+Transform { translation 0.12 -0.028 0 children [ Shape { appearance PBRAppearance { baseColor 0.98 0.59 0.18 roughness 0.85 metalness 0 } geometry Box { size 0.012 0.055 0.018 } } ] }
+Camera { translation 0.05 0 0.075 rotation 0 1 0 0.15 name "camera" width 320 height 240 fieldOfView 1.25 near 0.01 far 3 }
+
+HingeJoint { jointParameters HingeJointParameters { axis 0 1 0 anchor 0 0.0625 -0.005 }
+device [ RotationalMotor { name "left_motor" maxVelocity 18 maxTorque 0.12 sound "" } PositionSensor { name "left_encoder" } ]
+endPoint Solid { name "left_wheel" translation 0 0.0625 -0.005 rotation 1 0 0 -1.5707963 contactMaterial "wheel"
+children [ Shape { appearance PBRAppearance { baseColor 0.12 0.13 0.16 roughness 0.85 metalness 0 } geometry Cylinder { radius 0.027 height 0.014 } } ]
+boundingObject Cylinder { radius 0.027 height 0.014 } physics Physics { density -1 mass 0.06 }
+} }
+HingeJoint { jointParameters HingeJointParameters { axis 0 1 0 anchor 0 -0.0625 -0.005 }
+device [ RotationalMotor { name "right_motor" maxVelocity 18 maxTorque 0.12 sound "" } PositionSensor { name "right_encoder" } ]
+endPoint Solid { name "right_wheel" translation 0 -0.0625 -0.005 rotation 1 0 0 -1.5707963 contactMaterial "wheel"
+children [ Shape { appearance PBRAppearance { baseColor 0.12 0.13 0.16 roughness 0.85 metalness 0 } geometry Cylinder { radius 0.027 height 0.014 } } ]
+boundingObject Cylinder { radius 0.027 height 0.014 } physics Physics { density -1 mass 0.06 }
+} }
+Solid { name "caster" translation -0.055 0 -0.017 children [ Shape { appearance PBRAppearance { baseColor 0.7 0.73 0.78 roughness 0.85 metalness 0 } geometry Sphere { radius 0.013 } } ] boundingObject Sphere { radius 0.013 } physics Physics { density -1 mass 0.01 } contactMaterial "caster" }
+DistanceSensor { translation 0.062 0.036 -0.02 rotation 0 1 0 1.5707963 name "ir0" type "infra-red" lookupTable [ 0 1000 0, 0.03 1000 0, 0.045 0 0, 0.12 0 0 ] numberOfRays 1 }
+DistanceSensor { translation 0.062 0.024 -0.02 rotation 0 1 0 1.5707963 name "ir1" type "infra-red" lookupTable [ 0 1000 0, 0.03 1000 0, 0.045 0 0, 0.12 0 0 ] numberOfRays 1 }
+DistanceSensor { translation 0.062 0.012 -0.02 rotation 0 1 0 1.5707963 name "ir2" type "infra-red" lookupTable [ 0 1000 0, 0.03 1000 0, 0.045 0 0, 0.12 0 0 ] numberOfRays 1 }
+DistanceSensor { translation 0.062 0 -0.02 rotation 0 1 0 1.5707963 name "ir3" type "infra-red" lookupTable [ 0 1000 0, 0.03 1000 0, 0.045 0 0, 0.12 0 0 ] numberOfRays 1 }
+DistanceSensor { translation 0.062 -0.012 -0.02 rotation 0 1 0 1.5707963 name "ir4" type "infra-red" lookupTable [ 0 1000 0, 0.03 1000 0, 0.045 0 0, 0.12 0 0 ] numberOfRays 1 }
+DistanceSensor { translation 0.062 -0.024 -0.02 rotation 0 1 0 1.5707963 name "ir5" type "infra-red" lookupTable [ 0 1000 0, 0.03 1000 0, 0.045 0 0, 0.12 0 0 ] numberOfRays 1 }
+DistanceSensor { translation 0.062 -0.036 -0.02 rotation 0 1 0 1.5707963 name "ir6" type "infra-red" lookupTable [ 0 1000 0, 0.03 1000 0, 0.045 0 0, 0.12 0 0 ] numberOfRays 1 }
+DistanceSensor { translation 0.03 0 0.055 rotation 0 0 1 0 name "sonar_front" type "sonar" lookupTable [ 0 0 0, 1.5 1.5 0 ] numberOfRays 5 aperture 0.35 }
+DistanceSensor { translation 0.03 0 0.055 rotation 0 0 1 1.5707963267948966 name "sonar_left" type "sonar" lookupTable [ 0 0 0, 1.5 1.5 0 ] numberOfRays 5 aperture 0.35 }
+DistanceSensor { translation 0.03 0 0.055 rotation 0 0 1 -1.5707963267948966 name "sonar_right" type "sonar" lookupTable [ 0 0 0, 1.5 1.5 0 ] numberOfRays 5 aperture 0.35 }
+ ] boundingObject Box { size 0.15 0.105 0.045 } physics Physics { density -1 mass 0.6 }
+}

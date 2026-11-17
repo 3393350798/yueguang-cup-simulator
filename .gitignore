@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+.local/
+output/
+worlds/.*.wbproj
+*.log
+.env
+.env.*
+.playwright-cli/
+conversation-notes.md
+/docs/验证记录.md
