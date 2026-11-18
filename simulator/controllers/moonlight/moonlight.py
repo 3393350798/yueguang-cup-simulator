@@ -197,7 +197,10 @@ def reset(group=None,color=None,stage=None,limit=None):
     block_rotation.setSFRotation([0,0,1,0]);block.resetPhysics()
     block_color.setSFColor({'red':[.9,.025,.04],'yellow':[1,.78,.015],'blue':[.025,.14,.9]}[state['color']])
     tag_texture.setMFString(0,f"textures/tag{state['group']%2}.png")
-    for motor in motors:motor.setVelocity(0)
+    for motor in motors:
+        # Webots restores position control when loading the saved vehicle state.
+        motor.setPosition(float('inf'))
+        motor.setVelocity(0)
     for motor in joint_motors.values():motor.setPosition(0)
     claw.reset()
     actuated[:]=[0,0];manual[:]=[0,0];last_encoder=[d.getValue()*sign for d,sign in zip(encoders,WHEEL_SIGNS)]

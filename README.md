@@ -7,7 +7,7 @@
 ## 开始使用
 
 1. 安装 [Webots R2025a](https://github.com/cyberbotics/webots/releases/tag/R2025a) 和 [Python 3.11～3.13](https://www.python.org/downloads/)。安装 Python 时选择加入 PATH。
-2. [下载 v0.6.0 ZIP](https://github.com/3393350798/yueguang-cup-simulator/releases/download/v0.6.0/yueguang-cup-simulator-v0.6.0.zip) 并解压。在 Windows 下，双击 `setup.bat`，等待 Python 环境与依赖安装完毕，再关闭窗口。
+2. [下载 v0.6.1 ZIP](https://github.com/3393350798/yueguang-cup-simulator/releases/download/v0.6.1/yueguang-cup-simulator-v0.6.1.zip) 并解压。在 Windows 下，双击 `setup.bat`，等待 Python 环境与依赖安装完毕，再关闭窗口。
 3. 双击 `start.bat`，等待 Webots 加载赛场，脚本会自动打开中文浏览器面板。
 4. 可先使用「手动探索」查看场景和传感器；编写程序后选择「会员算法」，点击「重载算法」和「开始运行」。
 
