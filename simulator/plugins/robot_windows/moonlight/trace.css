@@ -18,3 +18,9 @@
 .trace-uart pre{max-height:130px;overflow:auto;margin:6px 0 0;padding:8px;background:#f8fafb;color:#3f5768;font:11px/1.55 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
 .uart-send-row{display:flex;flex-wrap:wrap;gap:6px}
 .uart-send-row input{flex:1;min-width:85px}
+.trial-panel{border-top:1px solid #edf1f3;margin-top:15px;padding-top:16px}
+.trial-panel p{color:#56717f;font-size:12px;line-height:1.6}
+.trial-panel #trial-label{width:110px}
+.trial-scroll{overflow:auto;max-height:260px;margin-bottom:14px}
+.trial-scroll table{border-collapse:collapse;min-width:445px;width:100%;font-size:11px}
+.trial-scroll td,.trial-scroll th{padding:7px 6px;text-align:left;border-bottom:1px solid #ecf1f4}

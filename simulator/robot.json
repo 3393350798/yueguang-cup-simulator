@@ -17,7 +17,8 @@
     "width_mm": 105,
     "height_mm": 45,
     "clearance_mm": 9.5,
-    "mass_kg": 0.6
+    "mass_kg": 0.6,
+    "center_of_mass_mm": [-18.35, 0, 0]
   },
   "wheels": {
     "radius_mm": 27,
@@ -58,9 +59,25 @@
     ]
   },
   "gripper": {
+    "kind": "parametric",
     "reach_mm": 120,
     "opening_mm": 56,
-    "carry_height_mm": 85,
-    "grab_distance_mm": 50
+    "closed_gap_mm": 24,
+    "finger_length_mm": 40,
+    "finger_thickness_mm": 7,
+    "finger_height_mm": 9,
+    "jaw_center_height_mm": 70,
+    "lift_travel_mm": 45,
+    "jaw_speed_mm_s": 26,
+    "lift_speed_mm_s": 60,
+    "jaw_force_n": 2,
+    "lift_force_n": 6,
+    "finger_mass_kg": 0.014,
+    "carriage_mass_kg": 0.045,
+    "friction": 0.85
+  },
+  "block": {
+    "mass_kg": 0.04,
+    "floor_friction": 0.5
   }
 }

@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from hardware_import import ROOT, import_geometry, import_netlist, import_urdf, read_json, write_json
 from hardware_import import destination, relative
+from gripper_editor import GripperEditor
 from pin_editor import PinEditor
 from sensor_editor import SensorEditor
 import shutil
@@ -35,9 +36,12 @@ class HardwareEditor:
         self.board_tab()
         self.firmware_tab()
         self.sensors = SensorEditor(tabs, self.robot, self.preview_geometry, self.edit, self.remap_bindings)
+        self.gripper = GripperEditor(tabs, self.edit, self.robot)
+        self.gripper.load(self.model)
         self.pins = PinEditor(tabs, self.device_roles, self.read_bindings, self.reference,
                               self.pin_nets, self.write_bindings, self.edit)
         tabs.add(self.mechanical, text='机械模型与驱动')
+        tabs.add(self.gripper, text='物理夹爪')
         tabs.add(self.sensors, text='传感器摆位')
         tabs.add(self.electronic, text='嘉立创EDA 网表')
         tabs.add(self.pins, text='F103 引脚图')
@@ -90,7 +94,7 @@ class HardwareEditor:
         self.field(form, 6, 'STL / OBJ 输入单位（STEP自动使用mm）', 'mm', 'unit', ['mm', 'cm', 'm'])
         self.field(form, 7, '车体与固件反馈周期（ms）', self.robot.get('step_ms', 32), 'step_ms', [4, 8, 16, 32])
         self.field(form, 8, '本机视觉接口端口（0 关闭）', self.robot.get('vision_link_port', 0), 'vision_link_port')
-        ttk.Label(f, text='URDF：X向前、Y向左、Z向上；保留关节、质量及碰撞体。\nSTEP/STL/OBJ：导入单体底盘几何，配合参数车轮和简化夹爪；装配关节请使用URDF。\nSolidWorks：先用URDF导出插件生成装配包，或将底盘另存为STEP。', wraplength=870).pack(anchor='w', pady=6)
+        ttk.Label(f, text='URDF：X 向前、Y 向左、Z 向上，保留关节、质量及碰撞体。\nSTEP/STL/OBJ：导入单体底盘，配合参数车轮和内置物理夹爪。\nSolidWorks 可导出 URDF 装配包，或将单体底盘另存为 STEP。', wraplength=870).pack(anchor='w', pady=6)
         self.refresh_model()
 
     def preview_geometry(self):
@@ -126,6 +130,7 @@ class HardwareEditor:
         for sonar in self.sensors.devices['sonar']['sensors']:
             yield from (f"sonar_{sonar['name']}_{role}" for role in ('trig', 'echo'))
         yield 'gripper_close'
+        yield 'gripper_lift'
 
     def read_bindings(self):
         bindings = {}
@@ -151,6 +156,8 @@ class HardwareEditor:
         names = [j['name'] for j in self.model.get('joints', []) if j['type'] in ('continuous', 'revolute')]
         self.left['values'] = names
         self.right['values'] = names
+        if hasattr(self, 'gripper'):
+            self.gripper.load(self.model)
         self.model_info.set('当前模型：'+self.model['kind']+'  '+self.model.get('source', '参数化差速小车'))
 
     def choose_urdf(self):
@@ -201,7 +208,7 @@ class HardwareEditor:
         self.bindings = tk.Text(form, height=10, font=('Consolas', 10))
         self.bindings.grid(row=2, column=1, sticky='ew', padx=(12, 0))
         self.bindings.insert('1.0', '\n'.join(f'{role}={pin}' for role, pin in self.board.get('bindings', {}).items()))
-        ttk.Label(f, text='填写格式：设备=器件.引脚（如 left_pwm=U1.10），或直接填 left_pwm=PA0。PWM复用由固件配置。\n设备：left_pwm / left_in1 / left_in2 / right_pwm / right_in1 / right_in2、encoder_left_a/b、encoder_right_a/b、ir0…、sonar_front_trig/echo（front可换成left/right）、gripper_close。\n固件页选择USART端口。网表提供接线资料；板卡三维模型用于安装外观。', wraplength=870).pack(anchor='w', pady=6)
+        ttk.Label(f, text='填写格式：设备=器件.引脚（如 left_pwm=U1.10），或直接填 left_pwm=PA0。PWM复用由固件配置。\n设备：left_pwm / left_in1 / left_in2 / right_pwm / right_in1 / right_in2、encoder_left_a/b、encoder_right_a/b、ir0…、sonar_front_trig/echo（front可换成left/right）、gripper_close、gripper_lift。\n固件页选择USART端口。网表提供接线资料；板卡三维模型用于安装外观。', wraplength=870).pack(anchor='w', pady=6)
         self.refresh_board()
 
     def refresh_board(self):
@@ -284,10 +291,16 @@ class HardwareEditor:
             if len(signs) != 2 or any(v not in (-1, 1) for v in signs):
                 raise ValueError('左右轮正向系数填写1或-1，例如1,-1。')
             model.update(left_joint=left, right_joint=right, left_sign=signs[0], right_sign=signs[1], origin_height_mm=float(self.fields['origin'].get()))
+        self.gripper.save(model)
         dimensions = [float(v) for v in self.fields['body'].get().split(',')]
         wheels = [float(v) for v in self.fields['wheels'].get().split(',')]
         if len(dimensions) != 3 or len(wheels) != 2 or min(dimensions+wheels) <= 0:
             raise ValueError('请填写三个底盘尺寸，以及轮半径、轮距；数值应大于0。')
+        body = dict(self.robot['body'], **dict(zip(('length_mm', 'width_mm', 'height_mm'), dimensions)))
+        if model['kind'] != 'urdf':
+            gripper = self.gripper.parametric_values(dict(self.robot, body=body))
+        else:
+            gripper = self.robot.get('gripper', {})
         step = int(self.fields['step_ms'].get())
         vision_port = int(self.fields['vision_link_port'].get())
         if not 0 <= vision_port <= 65535:
@@ -299,7 +312,7 @@ class HardwareEditor:
         if len(position) != 3:
             raise ValueError('板卡安装位置应为X,Y,Z三个数值。')
         self.robot['model'] = model
-        self.robot['body'].update(dict(zip(('length_mm', 'width_mm', 'height_mm'), dimensions)))
+        self.robot.update(body=body, gripper=gripper)
         self.robot['wheels'].update(radius_mm=wheels[0], track_mm=wheels[1])
         self.robot.update(sensors, step_ms=step, vision_link_port=vision_port)
         self.board.update(mcu_reference=self.reference(), bindings=bindings, position_mm=position)

@@ -1,7 +1,7 @@
 """将会员装配体与比赛传感器接入同一Webots控制器。"""
 import json
 import math
-from hardware_import import build_urdf_model
+from hardware_import import build_urdf_model, validated_urdf_gripper
 
 
 def numbers(values):
@@ -31,10 +31,15 @@ def board_shape(board):
     return f'''Transform {{ translation {numbers([v/1000 for v in board['position_mm']])} children [ Shape {{ appearance PBRAppearance {{ baseColor 0.06 0.45 0.2 roughness 0.8 metalness 0 }} geometry Mesh {{ url [ {url} ] }} }} ] }}'''
 
 
+def assembly_gripper(robot):
+    return validated_urdf_gripper(robot['model'])
+
+
 def assembly(robot, start, origin_z, board):
     model = robot['model']
     build_urdf_model(model)
     return f'''DEF CAR MemberRobot {{ translation {numbers([*start, origin_z])}
 name "Moonlight" controller "moonlight" supervisor TRUE window "moonlight"
+{'selfCollision TRUE' if model.get('gripper') else ''}
 toolSlot [ {sensors(robot, origin_z)} {board_shape(board)} ]
 }}'''

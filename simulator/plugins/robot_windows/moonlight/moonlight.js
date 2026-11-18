@@ -1,5 +1,6 @@
 const {default:config}=await import('./scene.js?v='+Date.now());
 const {initTrace}=await import('./trace.js?v='+Date.now());
+const {initTrials}=await import('./trials.js?v='+Date.now());
 const $=id=>document.getElementById(id);
 const colors={red:'红色',yellow:'黄色',blue:'蓝色'};
 const hardware=config.robot;
@@ -8,6 +9,9 @@ $('step-badge').textContent=`${config.step_ms??32} ms / 周期`;
 const trace=initTrace(config.step_ms??32);
 $('hardware-summary').textContent=`${hardware.name} · 底盘 ${hardware.body.length_mm} × ${hardware.body.width_mm} mm · 轮径 ${hardware.wheels.radius_mm*2} mm · 轮距 ${hardware.wheels.track_mm} mm · 红外 ${hardware.ir.positions_mm.length} 路 · 超声波 ${hardware.sonar.sensors.length} 路 · 摄像头 ${hardware.camera.width} × ${hardware.camera.height}`;
 const model=hardware.model||{kind:'parametric'};
+const claw=config.gripper||{kind:'none',jaws:[],lift:null};
+for(const id of ['grab','release'])$(id).disabled=!claw.jaws.length;
+for(const id of ['lift','lower'])$(id).disabled=!claw.lift;
 $('hardware-summary').textContent+=' · '+({urdf:'URDF装配体',mesh:'导入底盘几何',parametric:'参数车模'}[model.kind]);
 $('board-summary').textContent=`${config.board.mcu} · ${config.board.netlist?'已导入网表':'未导入网表'} · ${Object.keys(config.board.bindings).length} 项引脚对应 · 支持Renode固件模式`;
 for(const joint of model.joints||[]){
@@ -21,7 +25,7 @@ for(const joint of model.joints||[]){
   value.id='joint-value-'+joint.name;label.append(input);row.append(label,button,value);$('joint-controls').append(row);
 }
 document.querySelector('.camera').style.aspectRatio=`${hardware.camera.width}/${hardware.camera.height}`;
-const help={manual:'按住方向按钮驾驶，松开停车。在 Webots 画面中也可使用 W/A/S/D，E 夹取/释放，空格停车。',member:'在 member_algorithm.py 中填写自己的算法。模板初始为停车，保存后点击重载算法。',firmware:'先用 scripts/import-hardware.bat 导入固件并绑定管脚。点击开始后同步执行MCU；暂停冻结MCU，重置复位MCU。'};
+const help={manual:'按住方向按钮驾驶，松开停车。Webots 中用 W/A/S/D 驾驶，E 切换开合，Q 切换升降，空格停车。',member:'在 member_algorithm.py 中填写自己的算法。模板初始为停车，保存后点击重载算法。',firmware:'先用 scripts/import-hardware.bat 导入固件并绑定管脚。点击开始后同步执行MCU；暂停冻结MCU，重置复位MCU。'};
 const uartInput=$('uart-input'), uartFormat=$('uart-format');
 uartFormat.onchange=()=>{uartInput.placeholder=uartFormat.value==='hex'?'例如 A5 00 FF':'串口文本';uartInput.setCustomValidity('');};
 uartInput.oninput=()=>uartInput.setCustomValidity('');
@@ -48,6 +52,7 @@ function send(command,extra={}){
   if(socket?.readyState===1)socket.send(`robot:${new URLSearchParams(location.search).get('name')||'Moonlight'}:${payload}`);
   else pending.push(payload);
 }
+const observeTrial=initTrials(send);
 function connect(){
   const url=new URL(location.href);url.protocol=location.protocol==='https:'?'wss:':'ws:';
   url.pathname=url.pathname.substring(0,url.pathname.indexOf('/robot_windows/')+1);url.search='';url.hash='';
@@ -66,8 +71,9 @@ function connect(){
 }
 function render(data){
   if(!state){$('group').value=data.group;$('color').value=data.color;}
-  if(data.elapsed<(state?.elapsed||0))path=[];
+  if(data.trace_epoch!==state?.trace_epoch)path=[];
   state=data;
+  observeTrial(data);
   trace(data.trace_epoch,data.trace);
   $('step-badge').textContent=(config.step_ms??32)+' ms / 周期'+(data.running&&Number.isFinite(data.rate)?' · '+data.rate.toFixed(2)+'×':'');
   $('connection').textContent=data.running?'运行中':'已连接 · 待运行';
@@ -82,6 +88,11 @@ function render(data){
   $('uart-output').textContent=(uartFormat.value==='hex'?fw.uart_hex:fw.uart_text)||'';
   $('target').textContent=(data.target_side==='left'?'左侧':'右侧')+' · '+colors[data.color];
   $('grasp').textContent=data.carrying?'夹持中':data.grasped?'已完成':'等待';
+  const grip=data.claw;
+  if(grip){
+    const details=[`接触 ${grip.touching} / ${claw.contact_links?.length??0}`,grip.airborne?`离地 ${grip.clearance_mm.toFixed(1)} mm`:'物块未离地'];
+    $('claw-status').textContent=claw.kind==='none'?'当前装配体未绑定夹爪':details.join(' · ');
+  }
   $('placed').textContent=data.placed?(data.placed.correct?'正确目标圈':'其他放置圈')+` / ${data.placed.offset_mm} mm`:'尚未进圈';
   $('parking').textContent=data.aligned?'已摆正并停稳':data.parked?'已到达停稳':'等待';
   $('sonars').replaceChildren(...Object.entries(data.sensors.sonar).map(([name,value])=>{const d=document.createElement('div'),label=document.createElement('span'),v=document.createElement('strong');label.textContent=deviceNames[name]||name;v.textContent=(value*100).toFixed(1)+' cm';d.append(label,v);return d;}));
@@ -89,7 +100,10 @@ function render(data){
   for(const name of ['left','right'])$('wheel-'+name).textContent=(name==='left'?'左轮 ':'右轮 ')+data.sensors.speed[name].toFixed(3)+' m/s';
   $('collision').textContent=data.collision?'超声波区域有碰撞记录':'区域内无碰撞记录';
   $('collision').classList.toggle('warn',data.collision);
-  for(const [name,value] of Object.entries(data.sensors.joints||{}))$('joint-value-'+name).textContent=' 实测 '+value.toFixed(3);
+  for(const [name,value] of Object.entries(data.sensors.joints||{})){
+    const field=$('joint-value-'+name);
+    if(field)field.textContent=' 实测 '+value.toFixed(3);
+  }
   $('events').replaceChildren(...data.events.map(text=>{const li=document.createElement('li');li.textContent=text;return li;}));
   if(data.image){$('camera').src='data:image/jpeg;base64,'+data.image;$('camera').style.display='block';$('camera-empty').style.display='none';}
   if(!path.length||Math.hypot(data.pose[0]-path.at(-1)[0],data.pose[1]-path.at(-1)[1])>.006)path.push(data.pose);
@@ -111,20 +125,26 @@ function draw(){
     const b=hardware.body,w=hardware.wheels;
     ctx.fillStyle='#133b4d';ctx.fillRect(-b.length_mm/2,-b.width_mm/2,b.length_mm,b.width_mm);
     ctx.fillStyle='#465765';for(const y of [-w.track_mm/2,w.track_mm/2])ctx.fillRect(-w.radius_mm,y-w.width_mm/2,w.radius_mm*2,w.width_mm);
-    ctx.strokeStyle='#f6ab3d';ctx.lineWidth=8;ctx.beginPath();ctx.moveTo(b.length_mm/2,0);ctx.lineTo(hardware.gripper.reach_mm,0);ctx.stroke();
+    if(claw.kind==='parametric'){
+      ctx.strokeStyle='#f6ab3d';ctx.lineWidth=6;ctx.beginPath();ctx.moveTo(b.length_mm/2,0);ctx.lineTo(claw.reach_mm,0);ctx.stroke();
+    }
     ctx.fillStyle='#3bc2aa';for(const position of hardware.ir.positions_mm){ctx.beginPath();ctx.arc(position[0],-position[1],3,0,Math.PI*2);ctx.fill();}
     ctx.fillStyle='#278fc3';ctx.fillRect(hardware.camera.position_mm[0]-5,-hardware.camera.position_mm[1]-5,10,10);ctx.restore();
+  }
+  if(state?.block_position){
+    const color={red:'#df263e',yellow:'#dac226',blue:'#2460ec'}[state.color];
+    ctx.fillStyle=color;ctx.beginPath();ctx.arc(...p(state.block_position),5,0,Math.PI*2);ctx.fill();
   }
   for(const [name,text] of [['start','S'],['finish','F']]){const c=p(config[name]);ctx.fillStyle='#344d5f';ctx.font='600 16px sans-serif';ctx.textAlign='center';ctx.fillText(text,c[0],c[1]+5);}
 }
 image.onload=draw;
 for(const id of ['start','pause','reload','snapshot','channel'])$(id).onclick=()=>send(id);
-$('reset').onclick=()=>{path=[];send('reset',{group:Number($('group').value),color:$('color').value});};
+$('reset').onclick=()=>{path=[];send('reset',{group:Number($('group').value),color:$('color').value,stage:'full'});};
 $('mode').onchange=()=>{send('mode',{value:$('mode').value});$('mode-help').textContent=help[$('mode').value];};
 for(const button of document.querySelectorAll('[data-drive]')){
   button.onpointerdown=event=>{button.setPointerCapture(event.pointerId);send('drive',{value:button.dataset.drive.split(',').map(Number)});};
   button.onpointerup=button.onpointercancel=()=>send('drive',{value:[0,0]});
 }
-for(const value of ['grab','release'])$(value).onclick=()=>send('gripper',{value});
+for(const value of ['grab','release','lift','lower'])$(value).onclick=()=>send('gripper',{value});
 window.addEventListener('blur',()=>{if(state?.mode==='manual')send('drive',{value:[0,0]});});
 connect();

@@ -171,6 +171,8 @@ def step(packet):
                 sonar_triggers=sum(s.count for s in sonars))
     if 'gripper_close' in bindings:
         result['gripper_closed'] = bool(output_pin(bindings['gripper_close']))
+    if 'gripper_lift' in bindings:
+        result['gripper_raised'] = bool(output_pin(bindings['gripper_lift']))
     return result
 
 

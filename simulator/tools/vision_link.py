@@ -2,6 +2,7 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock, Thread
 from urllib.parse import parse_qs, urlsplit
+from uuid import uuid4
 
 
 class VisionLink:
@@ -13,6 +14,7 @@ class VisionLink:
         self.inbox = bytearray()
         self.outbox = bytearray()
         self.cursor = 0
+        self.uart_session = uuid4().hex
         link = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -56,7 +58,8 @@ class VisionLink:
                         start = end - len(link.outbox)
                         data = bytes(link.outbox[max(0, after-start):])
                     return self.reply(200, data, 'application/octet-stream',
-                                      **{'X-Next-Cursor':end, 'X-Buffer-Start':start})
+                                      **{'X-Next-Cursor':end, 'X-Buffer-Start':start,
+                                         'X-UART-Session':link.uart_session})
                 return self.reply(404)
 
             def do_POST(self):

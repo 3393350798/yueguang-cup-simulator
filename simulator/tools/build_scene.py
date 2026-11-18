@@ -6,6 +6,7 @@ from PIL import Image, ImageDraw, ImageFont
 from hardware_import import read_json
 from imported_robot import assembly, board_shape
 from competition_block import block_node
+from gripper_model import parametric_gripper, resolve_parametric_gripper
 from imperfections import Imperfections
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,6 +14,7 @@ ASSETS = ROOT / 'worlds' / 'textures'
 ASSETS.mkdir(parents=True, exist_ok=True)
 SCALE = 0.0027
 SIZE = 2.0
+FLOOR_Z = -.005
 robot = json.loads((ROOT/'robot.json').read_text(encoding='utf-8-sig'))
 step_ms = robot.get('step_ms', 32)
 if step_ms not in (4, 8, 16, 32):
@@ -27,7 +29,19 @@ length, width, height = [body[k]/1000 for k in ('length_mm','width_mm','height_m
 origin_z = body['clearance_mm']/1000 + height/2
 model = robot.get('model', {'kind': 'parametric'})
 if model['kind'] == 'urdf':
+    from imported_robot import assembly_gripper
     origin_z = model['origin_height_mm']/1000
+    gripper = assembly_gripper(robot)
+else:
+    gripper = resolve_parametric_gripper(robot)
+physics_step_ms = min(step_ms,4) if gripper['kind'] != 'none' else step_ms
+block_spec = dict(base_diameter_mm=56, top_diameter_mm=36, height_mm=70,
+                  base_height_mm=8, neck_height_mm=10, mass_kg=.04, floor_friction=.5)
+for key in ('mass_kg', 'floor_friction'):
+    block_spec[key] = float(robot.get('block', {}).get(key, block_spec[key]))
+if not (math.isfinite(block_spec['mass_kg']) and block_spec['mass_kg'] > 0
+        and math.isfinite(block_spec['floor_friction']) and block_spec['floor_friction'] >= 0):
+    raise ValueError('物块质量必须大于零，地面摩擦系数必须为有限的非负数。')
 board = read_json(ROOT/'board.json')
 radius, wheel_width, track = [wheels[k]/1000 for k in ('radius_mm','width_mm','track_mm')]
 
@@ -65,14 +79,16 @@ circles = []
 for row, py in [('right',202-0.25/SCALE), ('left',202+0.25/SCALE)]:
     for color, px in [('red',565-0.15/SCALE),('yellow',565),('blue',565+0.15/SCALE)]:
         circles.append(dict(side=row,color=color,center=xy((px,py))))
-config = dict(step_ms=step_ms, floor_size=SIZE, line_width=0.0225, wheel_radius=radius,
+config = dict(step_ms=step_ms, physics_step_ms=physics_step_ms,
+              floor_size=SIZE, line_width=0.0225, wheel_radius=radius,
               axle_length=track, body_size=[length,max(width,track+wheel_width)],
-              robot=robot, board=board, robot_origin_z=origin_z, start=xy((195,670)),
+              robot=robot, board=board, robot_origin_z=origin_z, floor_z=FLOOR_Z,
+              gripper=gripper, start=xy((195,670)),
               finish=xy((195,190)), pickup=xy((632,202)), marker=xy((565,202)),
               tag=xy((715,141)), circles=circles,
               channel=[xy((363,475)),xy((519,594))],
               tag_family='tag36h11', tag_size=0.08,
-              block=dict(base_diameter_mm=56,top_diameter_mm=36,height_mm=70,base_height_mm=8,neck_height_mm=10,mass_kg=0.04),
+              block=block_spec,
               geometry_note='教学近似布局；以正式 DWG 更新坐标，标签/挡板布置为练习配置')
 (ROOT/'scene.json').write_text(json.dumps(config,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
 
@@ -130,19 +146,30 @@ children [ Shape {{ appearance {material(color)} geometry DEF {name}_GEOM Box {{
 }}'''
 
 parts=['''#VRML_SIM R2025a utf8
-WorldInfo { basicTimeStep 32 coordinateSystem "ENU" contactProperties [ ContactProperties { material1 "wheel" coulombFriction [ 1 ] bumpSound "" rollSound "" slideSound "" } ContactProperties { bumpSound "" rollSound "" slideSound "" } ] }
+WorldInfo {
+  basicTimeStep STEP_MS coordinateSystem "ENU"
+  contactProperties [
+    ContactProperties { material1 "grip_pad" material2 "competition_block" coulombFriction [ GRIP_FRICTION ] bounce 0 softCFM 0.0001 bumpSound "" rollSound "" slideSound "" }
+    ContactProperties { material1 "competition_block" material2 "default" coulombFriction [ FLOOR_FRICTION ] bounce 0 bumpSound "" rollSound "" slideSound "" }
+    ContactProperties { material1 "wheel" coulombFriction [ 1 ] bumpSound "" rollSound "" slideSound "" }
+    ContactProperties { bumpSound "" rollSound "" slideSound "" }
+  ]
+}
 Viewpoint { orientation -0.57735027 0.57735027 0.57735027 2.0943951 position 0 0 6.1 fieldOfView 0.7 }
 Background { skyColor [ 0.91 0.94 0.97 ] }
 DirectionalLight { direction -0.3 -0.4 -1 intensity LIGHT_INTENSITY ambientIntensity LIGHT_AMBIENT castShadows TRUE }
 DEF FLOOR Solid {
-  translation 0 0 -0.005
+  translation 0 0 FLOOR_Z
   children [ Shape { appearance PBRAppearance {
     baseColorMap ImageTexture { url [ "textures/track.png" ] filtering 5 }
     roughness 1 metalness 0
   } geometry Plane { size 2 2 } } ]
   boundingObject Plane { size 2 2 }
 }
-'''.replace('basicTimeStep 32', f'basicTimeStep {step_ms}')
+'''.replace('STEP_MS', str(physics_step_ms))
+   .replace('GRIP_FRICTION', f'{gripper.get("friction", .85):.7g}')
+   .replace('FLOOR_FRICTION', f'{block_spec["floor_friction"]:.7g}')
+   .replace('FLOOR_Z', f'{FLOOR_Z:.7g}')
    .replace('LIGHT_INTENSITY', f'{1.3 * light_gain:g}')
    .replace('LIGHT_AMBIENT', f'{min(1, 0.65 * light_gain):g}')]
 for i,y in enumerate([y0-.006,y1+.006]):
@@ -152,7 +179,7 @@ tx,ty=config['tag']
 parts.append(f'''DEF TAG Solid {{ name "tag" translation {tx} {ty} 0.125 rotation 1 0 0 1.5707963
 children [ Shape {{ appearance PBRAppearance {{ baseColorMap DEF TAG_TEXTURE ImageTexture {{ url [ "textures/tag0.png" ] }} roughness 1 metalness 0 }} geometry Plane {{ size 0.1 0.1 }} }} ] }}''')
 bx,by=config['pickup']
-parts.append(block_node(bx,by))
+parts.append(block_node(bx,by,block_spec['mass_kg']))
 sx,sy=config['start']
 if model['kind'] == 'urdf':
     parts[0] = parts[0].replace('#VRML_SIM R2025a utf8', '#VRML_SIM R2025a utf8\nEXTERNPROTO "../protos/imported/MemberRobot.proto"')
@@ -171,12 +198,7 @@ children [
 Transform {{ translation {-length*.1} 0 {height/2+.008} children [ Shape {{ appearance {material('0.1 0.68 0.63')} geometry Box {{ size {v([length*.5,width*.8,.016])} }} }} ] }}
 ''')
 parts.append(board_shape(board))
-g=robot['gripper'];reach=g['reach_mm']/1000;opening=g['opening_mm']/1000
-for position,size in [([(length/2+reach)/2,0,0],[reach-length/2,.012,.012]),
-                      ([reach,0,0],[.008,opening+.008,.012]),
-                      ([reach,opening/2,0],[.03,.008,.018]),
-                      ([reach,-opening/2,0],[.03,.008,.018])]:
-    parts.append(f'Transform {{ translation {v(position)} children [ Shape {{ appearance {material("0.98 0.59 0.18")} geometry Box {{ size {v(size)} }} }} ] }}')
+parts.append(parametric_gripper(robot,gripper,origin_z,FLOOR_Z))
 c=robot['camera']
 parts.append(f'''Transform {{ translation {v(meters(c['position_mm']))} rotation 0 0 1 {math.radians(c['yaw_deg'])} children [
 Camera {{ rotation 0 1 0 {math.radians(c['pitch_deg'])} name "camera" width {c['width']} height {c['height']} fieldOfView {math.radians(c['fov_deg'])} near 0.01 far 3 }} ] }}''')
@@ -195,7 +217,16 @@ for i,position in enumerate(robot['ir']['positions_mm']):
 s=robot['sonar'];distance=s['range_mm']/1000
 for device in s['sensors']:
     parts.append(f'''DistanceSensor {{ translation {v(meters(device['position_mm']))} rotation 0 0 1 {math.radians(device['yaw_deg'])} name "sonar_{device['name']}" type "sonar" lookupTable [ 0 0 0, {distance} {distance} 0 ] numberOfRays 5 aperture {math.radians(s['aperture_deg'])} }}''')
-parts.append(f''' ] boundingObject Box {{ size {v([length,width,height])} }} physics Physics {{ density -1 mass {body['mass_kg']} }}
+# A fixed chassis center of mass lets a heavier or longer custom gripper
+# shift the complete vehicle's weight distribution in the physics engine.
+default_com_x = -18.35 if gripper['kind'] == 'parametric' else -6
+center_of_mass = body.get('center_of_mass_mm', [default_com_x,0,0])
+if (not isinstance(center_of_mass, list) or len(center_of_mass) != 3
+        or not all(isinstance(axis, (int,float)) and math.isfinite(axis) for axis in center_of_mass)):
+    raise ValueError('车身重心必须填写三个有限的坐标值（mm）。')
+parts.append(f''' ] boundingObject Box {{ size {v([length,width,height])} }} physics Physics {{
+  density -1 mass {body['mass_kg']} centerOfMass [ {v(meters(center_of_mass))} ]
+}}
 }}''')
 (ROOT/'worlds'/'moonlight.wbt').write_text('\n'.join(parts)+'\n',encoding='utf-8')
 print('Generated worlds/moonlight.wbt from robot.json')

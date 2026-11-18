@@ -44,6 +44,7 @@ class FirmwareBridge:
         self.uart_raw = b''
         self.uart_decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
         self.gripper = None
+        self.lift = None
         atexit.register(self.close)
         for path in (ROOT/'tools/firmware').glob('*.*'):
             shutil.copyfile(path, self.folder/path.name)
@@ -103,6 +104,9 @@ class FirmwareBridge:
         if 'gripper_closed' in result and result['gripper_closed'] != self.gripper:
             self.gripper = result['gripper_closed']
             result['gripper'] = 'grab' if self.gripper else 'release'
+        if 'gripper_raised' in result and result['gripper_raised'] != self.lift:
+            self.lift = result['gripper_raised']
+            result['gripper_lift'] = 'lift' if self.lift else 'lower'
         return result
 
     def close(self):

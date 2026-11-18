@@ -17,17 +17,18 @@ def surface(rings, segments=64):
     return f'IndexedFaceSet {{ coord Coordinate {{ point [ {points} ] }} coordIndex [ {indices} ] creaseAngle 0.5 }}'
 
 
-def block_node(x, y):
+def block_node(x, y, mass):
     visual = surface([(.028, -.035), (.028, -.027), (.018, .025), (.018, .035)])
-    slope = surface([(.028, -.027), (.018, .025)])
-    # 碰撞体跟随底座、锥台和上颈，夹爪可以接近上部较细处。
+    # 三段相邻的碰撞体分别保留底座、锥台和颈部尺寸。
+    slope = surface([(.028, -.027), (.018, .025)],32)
     collision = f'''Group {{ children [
-Pose {{ translation 0 0 -0.031 children [ Cylinder {{ radius 0.028 height 0.008 subdivision 48 }} ] }}
-{slope}
-Pose {{ translation 0 0 0.03 children [ Cylinder {{ radius 0.018 height 0.01 subdivision 48 }} ] }}
-] }}'''
+      Pose {{ translation 0 0 -0.031 children [ Cylinder {{ radius 0.028 height 0.008 subdivision 32 }} ] }}
+      {slope}
+      Pose {{ translation 0 0 0.03 children [ Cylinder {{ radius 0.018 height 0.01 subdivision 32 }} ] }}
+    ] }}'''
     return f'''DEF BLOCK Solid {{ name "block" translation {x} {y} 0.035
+contactMaterial "competition_block"
 children [ Shape {{ appearance DEF BLOCK_MATERIAL PBRAppearance {{ baseColor 0.9 0.05 0.08 roughness 0.7 metalness 0 }} geometry {visual} }} ]
 boundingObject {collision}
-physics Physics {{ density -1 mass 0.04 }}
+physics Physics {{ density -1 mass {mass:.7g} }}
 }}'''

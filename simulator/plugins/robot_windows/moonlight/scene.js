@@ -1,5 +1,6 @@
 export default {
   "step_ms": 32,
+  "physics_step_ms": 4,
   "floor_size": 2.0,
   "line_width": 0.0225,
   "wheel_radius": 0.027,
@@ -33,7 +34,12 @@ export default {
       "width_mm": 105,
       "height_mm": 45,
       "clearance_mm": 9.5,
-      "mass_kg": 0.6
+      "mass_kg": 0.6,
+      "center_of_mass_mm": [
+        -18.35,
+        0,
+        0
+      ]
     },
     "wheels": {
       "radius_mm": 27,
@@ -133,10 +139,26 @@ export default {
       ]
     },
     "gripper": {
+      "kind": "parametric",
       "reach_mm": 120,
       "opening_mm": 56,
-      "carry_height_mm": 85,
-      "grab_distance_mm": 50
+      "closed_gap_mm": 24,
+      "finger_length_mm": 40,
+      "finger_thickness_mm": 7,
+      "finger_height_mm": 9,
+      "jaw_center_height_mm": 70,
+      "lift_travel_mm": 45,
+      "jaw_speed_mm_s": 26,
+      "lift_speed_mm_s": 60,
+      "jaw_force_n": 2,
+      "lift_force_n": 6,
+      "finger_mass_kg": 0.014,
+      "carriage_mass_kg": 0.045,
+      "friction": 0.85
+    },
+    "block": {
+      "mass_kg": 0.04,
+      "floor_friction": 0.5
     }
   },
   "board": {
@@ -153,6 +175,50 @@ export default {
     ]
   },
   "robot_origin_z": 0.032,
+  "floor_z": -0.005,
+  "gripper": {
+    "reach_mm": 120.0,
+    "opening_mm": 56.0,
+    "closed_gap_mm": 24.0,
+    "finger_length_mm": 40.0,
+    "finger_thickness_mm": 7.0,
+    "finger_height_mm": 9.0,
+    "jaw_center_height_mm": 70.0,
+    "lift_travel_mm": 45.0,
+    "jaw_speed_mm_s": 26.0,
+    "lift_speed_mm_s": 60.0,
+    "jaw_force_n": 2.0,
+    "lift_force_n": 6.0,
+    "finger_mass_kg": 0.014,
+    "carriage_mass_kg": 0.045,
+    "friction": 0.85,
+    "kind": "parametric",
+    "jaws": [
+      {
+        "joint": "gripper_left",
+        "open": 0,
+        "closed": 0.016
+      },
+      {
+        "joint": "gripper_right",
+        "open": 0,
+        "closed": 0.016
+      }
+    ],
+    "lift": {
+      "joint": "gripper_lift",
+      "lower": 0,
+      "raise": 0.045
+    },
+    "contact_links": [
+      "gripper_left",
+      "gripper_right"
+    ],
+    "contact_defs": [
+      "GRIPPER_LEFT",
+      "GRIPPER_RIGHT"
+    ]
+  },
   "start": [
     -0.65475,
     -0.6885
@@ -241,7 +307,8 @@ export default {
     "height_mm": 70,
     "base_height_mm": 8,
     "neck_height_mm": 10,
-    "mass_kg": 0.04
+    "mass_kg": 0.04,
+    "floor_friction": 0.5
   },
   "geometry_note": "教学近似布局；以正式 DWG 更新坐标，标签/挡板布置为练习配置"
 };
