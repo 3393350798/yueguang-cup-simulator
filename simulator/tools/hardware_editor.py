@@ -3,6 +3,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from hardware_import import ROOT, import_geometry, import_netlist, import_urdf, read_json, write_json
 from hardware_import import destination, relative
+from pin_editor import PinEditor
+from sensor_editor import SensorEditor
 import shutil
 from pathlib import Path
 
@@ -11,7 +13,7 @@ class HardwareEditor:
     def __init__(self, window):
         self.window = window
         window.title('月光杯 · 导入自己的小车与板卡')
-        window.geometry('960x780')
+        window.geometry(f'{min(1000, window.winfo_screenwidth()-40)}x{min(820, window.winfo_screenheight()-80)}')
         self.robot = read_json(ROOT/'robot.json')
         self.board = read_json(ROOT/'board.json')
         self.firmware = read_json(ROOT/'firmware.json')
@@ -20,28 +22,39 @@ class HardwareEditor:
         self.status = tk.StringVar(value='关闭 Webots 后配置；保存后运行 start.bat。')
         ttk.Label(window, text='自己的机械 · 自己的板卡', font=('Microsoft YaHei UI', 18)).pack(anchor='w', padx=20, pady=(16, 4))
         ttk.Label(window, text='在本机导入文件，绑定车轮和引脚，再进入月光杯赛场。').pack(anchor='w', padx=20)
+        footer = ttk.Frame(window, padding=(20, 4, 20, 12))
+        footer.pack(side='bottom', fill='x')
+        ttk.Button(footer, text='保存配置', command=self.save).pack(side='right', padx=(8, 0))
+        ttk.Label(footer, textvariable=self.status, wraplength=710).pack(side='left')
         tabs = ttk.Notebook(window)
         tabs.pack(fill='both', expand=True, padx=16, pady=12)
         self.mechanical = ttk.Frame(tabs, padding=12)
         self.electronic = ttk.Frame(tabs, padding=12)
         self.firmware_frame = ttk.Frame(tabs, padding=12)
-        tabs.add(self.mechanical, text='机械模型与驱动')
-        tabs.add(self.electronic, text='嘉立创EDA · STM32F103C8T6')
-        tabs.add(self.firmware_frame, text='固件执行 · Renode')
         self.mechanical_tab()
         self.board_tab()
         self.firmware_tab()
-        ttk.Label(window, textvariable=self.status, wraplength=910).pack(anchor='w', padx=20, pady=4)
-        ttk.Button(window, text='保存配置', command=self.save).pack(anchor='e', padx=20, pady=(0, 16))
+        self.sensors = SensorEditor(tabs, self.robot, self.preview_geometry, self.edit, self.remap_bindings)
+        self.pins = PinEditor(tabs, self.device_roles, self.read_bindings, self.reference,
+                              self.pin_nets, self.write_bindings, self.edit)
+        tabs.add(self.mechanical, text='机械模型与驱动')
+        tabs.add(self.sensors, text='传感器摆位')
+        tabs.add(self.electronic, text='嘉立创EDA 网表')
+        tabs.add(self.pins, text='F103 引脚图')
+        tabs.add(self.firmware_frame, text='固件执行 · Renode')
+        tabs.bind('<<NotebookTabChanged>>', lambda _: (self.sensors.draw(), self.pins.refresh()))
 
     def action(self, callback):
         self.status.set('正在处理文件…')
         self.window.update_idletasks()
+        self.edit(callback)
+
+    def edit(self, callback):
         try:
             callback()
         except Exception as error:
             self.status.set(str(error))
-            messagebox.showerror('文件导入', str(error), parent=self.window)
+            messagebox.showerror('硬件配置', str(error), parent=self.window)
 
     def field(self, frame, row, label, value, key, choices=None):
         ttk.Label(frame, text=label).grid(row=row, column=0, sticky='w', pady=4)
@@ -75,8 +88,61 @@ class HardwareEditor:
         self.field(form, 4, '轮半径 / 轮距（mm）', f"{wheels['radius_mm']},{wheels['track_mm']}", 'wheels')
         self.field(form, 5, '底盘长 / 宽 / 高（mm，停车轮廓）', ','.join(str(body[k]) for k in ('length_mm', 'width_mm', 'height_mm')), 'body')
         self.field(form, 6, 'STL / OBJ 输入单位（STEP自动使用mm）', 'mm', 'unit', ['mm', 'cm', 'm'])
-        ttk.Label(f, text='URDF：X向前、Y向左、Z向上；保留关节、质量及碰撞体。传感器位置相对根坐标，仍在 robot.json 中配置。\nSTEP/STL/OBJ：导入单体底盘几何，配合参数车轮和简化夹爪；装配关节请使用URDF。\nSolidWorks：先用URDF导出插件生成装配包，或将底盘另存为STEP。', wraplength=870).pack(anchor='w', pady=6)
+        self.field(form, 7, '车体与固件反馈周期（ms）', self.robot.get('step_ms', 32), 'step_ms', [4, 8, 16, 32])
+        self.field(form, 8, '本机视觉接口端口（0 关闭）', self.robot.get('vision_link_port', 0), 'vision_link_port')
+        ttk.Label(f, text='URDF：X向前、Y向左、Z向上；保留关节、质量及碰撞体。\nSTEP/STL/OBJ：导入单体底盘几何，配合参数车轮和简化夹爪；装配关节请使用URDF。\nSolidWorks：先用URDF导出插件生成装配包，或将底盘另存为STEP。', wraplength=870).pack(anchor='w', pady=6)
         self.refresh_model()
+
+    def preview_geometry(self):
+        body = self.robot['body']
+        dimensions = [body[key] for key in ('length_mm', 'width_mm', 'height_mm')]
+        try:
+            values = [SensorEditor.number(v) for v in self.fields['body'].get().split(',')]
+            if len(values) == 3 and min(values) > 0:
+                dimensions = values
+        except ValueError:
+            pass
+        origin = body['clearance_mm']+dimensions[2]/2
+        if self.model['kind'] == 'urdf':
+            try:
+                origin = SensorEditor.number(self.fields['origin'].get())
+            except ValueError:
+                origin = self.model.get('origin_height_mm', origin)
+        return (*dimensions, origin)
+
+    def reference(self):
+        return self.fields['mcu'].get().strip()
+
+    def pin_nets(self, number):
+        ref = self.reference().upper()
+        return [net for net, nodes in self.net_data['nets'].items()
+                if any(node['ref'].upper() == ref and node['pin'] == str(number) for node in nodes)]
+
+    def device_roles(self):
+        for side in ('left', 'right'):
+            yield from (f'{side}_{role}' for role in ('pwm', 'in1', 'in2'))
+            yield from (f'encoder_{side}_{phase}' for phase in ('a', 'b'))
+        yield from (f'ir{i}' for i in range(len(self.sensors.devices['ir']['positions_mm'])))
+        for sonar in self.sensors.devices['sonar']['sensors']:
+            yield from (f"sonar_{sonar['name']}_{role}" for role in ('trig', 'echo'))
+        yield 'gripper_close'
+
+    def read_bindings(self):
+        bindings = {}
+        for line in self.bindings.get('1.0', 'end').splitlines():
+            if line.strip():
+                role, pin = line.split('=', 1)
+                bindings[role.strip()] = pin.strip()
+        return bindings
+
+    def write_bindings(self, bindings):
+        self.bindings.delete('1.0', 'end')
+        self.bindings.insert('1.0', '\n'.join(f'{role}={pin}' for role, pin in bindings.items()))
+
+    def remap_bindings(self, mapping):
+        bindings = self.read_bindings()
+        self.write_bindings({mapping.get(role, role): pin for role, pin in bindings.items()
+                             if mapping.get(role, role) is not None})
 
     def refresh_model(self):
         self.tree.delete(*self.tree.get_children())
@@ -142,6 +208,7 @@ class HardwareEditor:
         self.nets.delete(*self.nets.get_children())
         source = self.board.get('netlist')
         data = read_json(ROOT/source) if source else {'components': {}, 'nets': {}}
+        self.net_data = data
         for net, nodes in data['nets'].items():
             self.nets.insert('', 'end', text=net, values=('  '.join(n['ref']+'.'+n['pin'] for n in nodes),))
         self.mcu['values'] = list(data['components'])
@@ -187,7 +254,7 @@ class HardwareEditor:
         self.field(form, 4, '左右电机正向系数', ','.join(map(str,self.firmware['motor_signs'])), 'motor_signs')
         self.field(form, 5, '视觉与调试串口', self.firmware['vision_uart'], 'vision_uart', ['usart1','usart2','usart3'])
         self.field(form, 6, 'CPU虚拟指令率（MIPS，正整数）', int(self.firmware.get('cpu_mips',8)), 'cpu_mips')
-        ttk.Label(f, text='先运行 scripts/setup-firmware.bat 安装固件后端；导入自己的已编译固件并在接线页绑定管脚。\n保存后启动场景，选择「STM32固件」并点击开始。重置场景会同时复位MCU。\n支持：TIM1～4 PWM1/PWM2、双方向电机驱动、AB编码器、GPIO红外、ADC1轮询、HC-SR04触发/回波、USART。\n时钟采用固定72MHz配置；ADC为即时转换模型。DMA、USB、I2C/SPI器件与任意整板电路需另行适配。\n固件只保存在本机 simulator/hardware/imported/；源工程请先在Keil/CubeIDE中编译。详细接线及限制见 docs/固件执行.md。', wraplength=870).pack(anchor='w', pady=20)
+        ttk.Label(f, text='TIM1～4 PWM1/PWM2、AB编码器、GPIO红外、HC-SR04 触发/回波。\nADC1：轮询、扫描、EOC 中断和 DMA1 通道 1，每次转换约 100 µs。\nUSART1～3：轮询、中断及收发 DMA。时钟采用固定 72 MHz 配置。\n详细接线、支持范围与固件导入方式见 docs/固件执行.md。', wraplength=870).pack(anchor='w', pady=20)
 
     def choose_firmware(self):
         path = filedialog.askopenfilename(filetypes=[('已编译STM32固件','*.elf *.axf *.hex *.bin')])
@@ -221,18 +288,21 @@ class HardwareEditor:
         wheels = [float(v) for v in self.fields['wheels'].get().split(',')]
         if len(dimensions) != 3 or len(wheels) != 2 or min(dimensions+wheels) <= 0:
             raise ValueError('请填写三个底盘尺寸，以及轮半径、轮距；数值应大于0。')
-        bindings = {}
-        for line in self.bindings.get('1.0', 'end').splitlines():
-            if line.strip():
-                role, pin = line.split('=', 1)
-                bindings[role.strip()] = pin.strip()
+        step = int(self.fields['step_ms'].get())
+        vision_port = int(self.fields['vision_link_port'].get())
+        if not 0 <= vision_port <= 65535:
+            raise ValueError('视觉接口端口填写 0～65535 的整数。')
+        origin = model['origin_height_mm'] if model['kind'] == 'urdf' else self.robot['body']['clearance_mm']+dimensions[2]/2
+        sensors = self.sensors.values(origin)
+        bindings = self.read_bindings()
         position = [float(v) for v in self.fields['board_position'].get().split(',')]
         if len(position) != 3:
             raise ValueError('板卡安装位置应为X,Y,Z三个数值。')
         self.robot['model'] = model
         self.robot['body'].update(dict(zip(('length_mm', 'width_mm', 'height_mm'), dimensions)))
         self.robot['wheels'].update(radius_mm=wheels[0], track_mm=wheels[1])
-        self.board.update(mcu_reference=self.fields['mcu'].get(), bindings=bindings, position_mm=position)
+        self.robot.update(sensors, step_ms=step, vision_link_port=vision_port)
+        self.board.update(mcu_reference=self.reference(), bindings=bindings, position_mm=position)
         from firmware.pins import resolve_pin
         for pin in bindings.values():
             resolve_pin(pin, self.board['mcu_reference'])

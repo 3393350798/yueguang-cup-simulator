@@ -6,6 +6,7 @@ from PIL import Image, ImageDraw, ImageFont
 from hardware_import import read_json
 from imported_robot import assembly, board_shape
 from competition_block import block_node
+from imperfections import Imperfections
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / 'worlds' / 'textures'
@@ -13,6 +14,14 @@ ASSETS.mkdir(parents=True, exist_ok=True)
 SCALE = 0.0027
 SIZE = 2.0
 robot = json.loads((ROOT/'robot.json').read_text(encoding='utf-8-sig'))
+step_ms = robot.get('step_ms', 32)
+if step_ms not in (4, 8, 16, 32):
+    raise ValueError('step_ms 应为 4、8、16 或 32。')
+imp_config = robot.get('imperfections', {})
+Imperfections(imp_config)
+light_gain = imp_config.get('light_gain', 1)
+if not 0 <= light_gain <= 3:
+    raise ValueError('light_gain 应在 0 到 3 之间。')
 body, wheels = robot['body'], robot['wheels']
 length, width, height = [body[k]/1000 for k in ('length_mm','width_mm','height_mm')]
 origin_z = body['clearance_mm']/1000 + height/2
@@ -56,7 +65,7 @@ circles = []
 for row, py in [('right',202-0.25/SCALE), ('left',202+0.25/SCALE)]:
     for color, px in [('red',565-0.15/SCALE),('yellow',565),('blue',565+0.15/SCALE)]:
         circles.append(dict(side=row,color=color,center=xy((px,py))))
-config = dict(floor_size=SIZE, line_width=0.0225, wheel_radius=radius,
+config = dict(step_ms=step_ms, floor_size=SIZE, line_width=0.0225, wheel_radius=radius,
               axle_length=track, body_size=[length,max(width,track+wheel_width)],
               robot=robot, board=board, robot_origin_z=origin_z, start=xy((195,670)),
               finish=xy((195,190)), pickup=xy((632,202)), marker=xy((565,202)),
@@ -124,7 +133,7 @@ parts=['''#VRML_SIM R2025a utf8
 WorldInfo { basicTimeStep 32 coordinateSystem "ENU" contactProperties [ ContactProperties { material1 "wheel" coulombFriction [ 1 ] bumpSound "" rollSound "" slideSound "" } ContactProperties { bumpSound "" rollSound "" slideSound "" } ] }
 Viewpoint { orientation -0.57735027 0.57735027 0.57735027 2.0943951 position 0 0 6.1 fieldOfView 0.7 }
 Background { skyColor [ 0.91 0.94 0.97 ] }
-DirectionalLight { direction -0.3 -0.4 -1 intensity 1.3 ambientIntensity 0.65 castShadows TRUE }
+DirectionalLight { direction -0.3 -0.4 -1 intensity LIGHT_INTENSITY ambientIntensity LIGHT_AMBIENT castShadows TRUE }
 DEF FLOOR Solid {
   translation 0 0 -0.005
   children [ Shape { appearance PBRAppearance {
@@ -133,7 +142,9 @@ DEF FLOOR Solid {
   } geometry Plane { size 2 2 } } ]
   boundingObject Plane { size 2 2 }
 }
-''']
+'''.replace('basicTimeStep 32', f'basicTimeStep {step_ms}')
+   .replace('LIGHT_INTENSITY', f'{1.3 * light_gain:g}')
+   .replace('LIGHT_AMBIENT', f'{min(1, 0.65 * light_gain):g}')]
 for i,y in enumerate([y0-.006,y1+.006]):
     parts.append(solid_box(f'WALL_{i}',[(x0+x1)/2,y,.065],[x1-x0,.012,.14],'0.34 0.42 0.54'))
 # 立牌图案平面默认位于局部 XY，将法线转向南侧。

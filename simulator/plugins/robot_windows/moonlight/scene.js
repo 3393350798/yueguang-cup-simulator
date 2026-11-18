@@ -1,4 +1,5 @@
 export default {
+  "step_ms": 32,
   "floor_size": 2.0,
   "line_width": 0.0225,
   "wheel_radius": 0.027,
@@ -9,6 +10,24 @@ export default {
   ],
   "robot": {
     "name": "默认差速小车",
+    "step_ms": 32,
+    "vision_link_port": 0,
+    "imperfections": {
+      "seed": 0,
+      "motor_gain": [
+        1,
+        1
+      ],
+      "motor_deadzone": [
+        0,
+        0
+      ],
+      "ir_noise": 0,
+      "sonar_noise_mm": 0,
+      "light_gain": 1,
+      "uart_delay_ms": 0,
+      "uart_loss": 0
+    },
     "body": {
       "length_mm": 150,
       "width_mm": 105,

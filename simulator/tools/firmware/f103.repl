@@ -4,6 +4,10 @@ flash: Memory.MappedMemory @ { sysbus 0x08000000; sysbus 0x00000000 }
     size: 0x10000
 sram: Memory.MappedMemory @ sysbus 0x20000000
     size: 0x5000
+bitbandPeripherals: Miscellaneous.BitBanding @ sysbus <0x42000000, +0x2000000>
+    peripheralBase: 0x40000000
+bitbandSram: Miscellaneous.BitBanding @ sysbus <0x22000000, +0x100000>
+    peripheralBase: 0x20000000
 // Preserve FLASH_ACR latency/prefetch writes used during clock initialization.
 // Flash erase/programming is outside this execution profile.
 flashControl: Memory.ArrayMemory @ sysbus 0x40022000
@@ -16,12 +20,21 @@ cpu: CPU.CortexM @ sysbus
     cpuType: "cortex-m3"
     nvic: nvic
     PerformanceInMips: 8
-usart1: UART.STM32_UART @ sysbus <0x40013800, +0x100>
+usart1: UART.MoonlightSTM32USART @ sysbus <0x40013800, +0x100>
+    frequency: 72000000
     -> nvic@37
-usart2: UART.STM32_UART @ sysbus <0x40004400, +0x100>
+    DMARequest -> dma1@4
+    TransmitDMARequest -> dma1@3
+usart2: UART.MoonlightSTM32USART @ sysbus <0x40004400, +0x100>
+    frequency: 36000000
     -> nvic@38
-usart3: UART.STM32_UART @ sysbus <0x40004800, +0x100>
+    DMARequest -> dma1@5
+    TransmitDMARequest -> dma1@6
+usart3: UART.MoonlightSTM32USART @ sysbus <0x40004800, +0x100>
+    frequency: 36000000
     -> nvic@39
+    DMARequest -> dma1@2
+    TransmitDMARequest -> dma1@1
 exti: IRQControllers.STM32F4_EXTI @ sysbus 0x40010400
     numberOfOutputLines: 19
     [0-4] -> nvic@[6-10]
@@ -106,7 +119,8 @@ rcc: Python.PythonPeripheral @ sysbus 0x40021000
     size: 0x400
     initable: true
     filename: "rcc.py"
-adc1: Python.PythonPeripheral @ sysbus 0x40012400
-    size: 0x100
-    initable: true
-    filename: "adc.py"
+dma1: DMA.STM32LDMA @ sysbus 0x40020000
+    [0-6] -> nvic@[11-17]
+adc1: Analog.MoonlightSTM32ADC @ sysbus 0x40012400
+    IRQ -> nvic@18
+    DMARequest -> dma1@0

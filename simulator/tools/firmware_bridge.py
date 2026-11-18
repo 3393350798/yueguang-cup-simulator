@@ -1,6 +1,7 @@
 """Webots ↔ Renode；仅交换器件输入输出，不含比赛算法。"""
 from pathlib import Path
 import atexit
+import codecs
 import json
 import os
 import shutil
@@ -40,20 +41,23 @@ class FirmwareBridge:
         self.folder = Path(tempfile.mkdtemp(prefix='moonlight-fw-'))
         self.process = self.socket = self.stream = None
         self.uart = ''
+        self.uart_raw = b''
+        self.uart_decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
         self.gripper = None
         atexit.register(self.close)
         for path in (ROOT/'tools/firmware').glob('*.*'):
             shutil.copyfile(path, self.folder/path.name)
         platform = (self.folder/'f103.repl').read_text(encoding='utf-8')
-        for name in ('rcc.py', 'adc.py'):
-            platform = platform.replace('"'+name+'"', '"'+(self.folder/name).as_posix()+'"')
+        platform = platform.replace('"rcc.py"', '"'+(self.folder/'rcc.py').as_posix()+'"')
         platform = platform.replace('PerformanceInMips: 8', 'PerformanceInMips: '+str(int(self.config.get('cpu_mips', 8))))
         (self.folder/'f103.repl').write_text(platform, encoding='utf-8')
         suffix = image.suffix.lower()
         shutil.copyfile(image, self.folder/('member'+suffix))
         (self.folder/'session.json').write_text(json.dumps(dict(self.config, bindings=bindings)), encoding='utf-8')
         load = {'.elf':'LoadELF', '.axf':'LoadELF', '.hex':'LoadHEX', '.bin':'LoadBinary'}[suffix]
-        lines = ['include @MoonlightSTM32Timer.cs', 'mach create', 'machine LoadPlatformDescription @f103.repl', f'sysbus {load} @member{suffix}']
+        lines = ['include @MoonlightSTM32Timer.cs', 'include @MoonlightSTM32ADC.cs',
+                 'include @MoonlightSTM32USART.cs', 'mach create',
+                 'machine LoadPlatformDescription @f103.repl', f'sysbus {load} @member{suffix}']
         if suffix == '.bin':
             address = int(str(self.config['bin_address']), 0)
             lines[-1] += ' '+hex(address)
@@ -82,7 +86,7 @@ class FirmwareBridge:
 
     def step(self, sensors, dt, uart=''):
         packet = {key:sensors[key] for key in ('ir','sonar','encoder')}
-        packet.update(dt=dt, uart=list(uart.encode('utf-8')))
+        packet.update(dt=dt, uart=list(uart.encode('utf-8') if isinstance(uart, str) else uart))
         self.stream.write((json.dumps(packet)+'\n').encode('ascii'))
         self.stream.flush()
         line = self.stream.readline()
@@ -91,8 +95,11 @@ class FirmwareBridge:
         result = json.loads(line)
         if 'error' in result:
             raise RuntimeError(result['error'])
-        self.uart = (self.uart+bytes(result['uart']).decode('utf-8', errors='replace'))[-2000:]
+        raw = bytes(result['uart'])
+        self.uart_raw = (self.uart_raw+raw)[-512:]
+        self.uart = (self.uart+self.uart_decoder.decode(raw))[-2000:]
         result['uart_text'] = self.uart
+        result['uart_hex'] = self.uart_raw.hex(' ').upper()
         if 'gripper_closed' in result and result['gripper_closed'] != self.gripper:
             self.gripper = result['gripper_closed']
             result['gripper'] = 'grab' if self.gripper else 'release'

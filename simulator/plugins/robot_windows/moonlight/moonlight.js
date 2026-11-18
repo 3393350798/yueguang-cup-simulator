@@ -1,8 +1,11 @@
 const {default:config}=await import('./scene.js?v='+Date.now());
+const {initTrace}=await import('./trace.js?v='+Date.now());
 const $=id=>document.getElementById(id);
 const colors={red:'红色',yellow:'黄色',blue:'蓝色'};
 const hardware=config.robot;
 const deviceNames={front:'前距',left:'左距',right:'右距',rear:'后距'};
+$('step-badge').textContent=`${config.step_ms??32} ms / 周期`;
+const trace=initTrace(config.step_ms??32);
 $('hardware-summary').textContent=`${hardware.name} · 底盘 ${hardware.body.length_mm} × ${hardware.body.width_mm} mm · 轮径 ${hardware.wheels.radius_mm*2} mm · 轮距 ${hardware.wheels.track_mm} mm · 红外 ${hardware.ir.positions_mm.length} 路 · 超声波 ${hardware.sonar.sensors.length} 路 · 摄像头 ${hardware.camera.width} × ${hardware.camera.height}`;
 const model=hardware.model||{kind:'parametric'};
 $('hardware-summary').textContent+=' · '+({urdf:'URDF装配体',mesh:'导入底盘几何',parametric:'参数车模'}[model.kind]);
@@ -19,7 +22,22 @@ for(const joint of model.joints||[]){
 }
 document.querySelector('.camera').style.aspectRatio=`${hardware.camera.width}/${hardware.camera.height}`;
 const help={manual:'按住方向按钮驾驶，松开停车。在 Webots 画面中也可使用 W/A/S/D，E 夹取/释放，空格停车。',member:'在 member_algorithm.py 中填写自己的算法。模板初始为停车，保存后点击重载算法。',firmware:'先用 scripts/import-hardware.bat 导入固件并绑定管脚。点击开始后同步执行MCU；暂停冻结MCU，重置复位MCU。'};
-$('uart-send').onclick=()=>{send('uart',{value:$('uart-input').value+'\n'});$('uart-input').value='';};
+const uartInput=$('uart-input'), uartFormat=$('uart-format');
+uartFormat.onchange=()=>{uartInput.placeholder=uartFormat.value==='hex'?'例如 A5 00 FF':'串口文本';uartInput.setCustomValidity('');};
+uartInput.oninput=()=>uartInput.setCustomValidity('');
+$('uart-send').onclick=()=>{
+  let value=uartInput.value+'\n';
+  if(uartFormat.value==='hex'){
+    const hex=uartInput.value.replace(/[\s,]+/g,'');
+    if(!/^(?:[0-9a-f]{2})+$/i.test(hex)){
+      uartInput.setCustomValidity('每个字节需要两位十六进制数字，例如 A5 00 FF。');
+      uartInput.reportValidity();
+      return;
+    }
+    value=hex.match(/../g).map(pair=>parseInt(pair,16));
+  }
+  send('uart',{value});uartInput.value='';
+};
 let state=null,path=[],socket=null,pending=[];
 const image=new Image();
 const base=new URL('track.png',location.href);
@@ -50,6 +68,8 @@ function render(data){
   if(!state){$('group').value=data.group;$('color').value=data.color;}
   if(data.elapsed<(state?.elapsed||0))path=[];
   state=data;
+  trace(data.trace_epoch,data.trace);
+  $('step-badge').textContent=(config.step_ms??32)+' ms / 周期'+(data.running&&Number.isFinite(data.rate)?' · '+data.rate.toFixed(2)+'×':'');
   $('connection').textContent=data.running?'运行中':'已连接 · 待运行';
   $('timer').textContent=`${String(Math.floor(data.elapsed/60)).padStart(2,'0')}:${(data.elapsed%60).toFixed(1).padStart(4,'0')}`;
   $('message').textContent=data.message;
@@ -59,7 +79,7 @@ function render(data){
   $('firmware-card').hidden=data.mode!=='firmware';
   const fw=data.firmware||{};
   $('firmware-status').textContent=fw.pc?`PC ${fw.pc} · MCU ${fw.virtual_s.toFixed(3)} s · PWM 左 ${fw.left.toFixed(3)} / 右 ${fw.right.toFixed(3)} · 超声触发 ${fw.sonar_triggers}`:'点击开始加载固件';
-  $('uart-output').textContent=fw.uart_text||'';
+  $('uart-output').textContent=(uartFormat.value==='hex'?fw.uart_hex:fw.uart_text)||'';
   $('target').textContent=(data.target_side==='left'?'左侧':'右侧')+' · '+colors[data.color];
   $('grasp').textContent=data.carrying?'夹持中':data.grasped?'已完成':'等待';
   $('placed').textContent=data.placed?(data.placed.correct?'正确目标圈':'其他放置圈')+` / ${data.placed.offset_mm} mm`:'尚未进圈';

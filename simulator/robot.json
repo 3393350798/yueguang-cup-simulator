@@ -1,5 +1,17 @@
 {
   "name": "默认差速小车",
+  "step_ms": 32,
+  "vision_link_port": 0,
+  "imperfections": {
+    "seed": 0,
+    "motor_gain": [1, 1],
+    "motor_deadzone": [0, 0],
+    "ir_noise": 0,
+    "sonar_noise_mm": 0,
+    "light_gain": 1,
+    "uart_delay_ms": 0,
+    "uart_loss": 0
+  },
   "body": {
     "length_mm": 150,
     "width_mm": 105,

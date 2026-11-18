@@ -7,7 +7,7 @@
 ## 开始使用
 
 1. 安装 [Webots R2025a](https://github.com/cyberbotics/webots/releases/tag/R2025a) 和 [Python 3.11～3.13](https://www.python.org/downloads/)。安装 Python 时选择加入 PATH。
-2. [下载 v0.4.2 ZIP](https://github.com/3393350798/yueguang-cup-simulator/releases/download/v0.4.2/yueguang-cup-simulator-v0.4.2.zip) 并解压。在 Windows 下，双击 `setup.bat`，等待 Python 环境与依赖安装完毕，再关闭窗口。
+2. [下载 v0.5.0 ZIP](https://github.com/3393350798/yueguang-cup-simulator/releases/download/v0.5.0/yueguang-cup-simulator-v0.5.0.zip) 并解压。在 Windows 下，双击 `setup.bat`，等待 Python 环境与依赖安装完毕，再关闭窗口。
 3. 双击 `start.bat`，等待 Webots 加载赛场，脚本会自动打开中文浏览器面板。
 4. 可先使用「手动探索」查看场景和传感器；编写程序后选择「会员算法」，点击「重载算法」和「开始运行」。
 
@@ -33,10 +33,12 @@ sh start.sh
 
 ## 功能
 
-- **自定义小车**：双击 `scripts/configure.bat` 编辑 `simulator/robot.json`，调整底盘、车轮、电机、摄像头、红外、超声波和简化夹爪。重新启动后生成对应车模，详见 [自定义小车](docs/自定义小车.md)。
+- **自定义小车**：在 `scripts/import-hardware.bat` 中调整底盘、车轮与仿真步长，并在坐标图中摆放红外、超声波和相机。也可用 `scripts/configure.bat` 直接编辑参数，详见 [自定义小车](docs/自定义小车.md)。
 - **机械模型导入**：双击 `scripts/import-hardware.bat`，导入 URDF/ZIP 装配包并绑定左右轮，也可导入 STEP/STL/OBJ 底盘几何。额外关节可在面板手动设置目标位置，或由自己的程序控制，详见 [导入自己的硬件](docs/导入自己的硬件.md)。
-- **嘉立创EDA资料导入**：导入标准版/专业版导出的 PADS 9.5 网表，查看器件、网络及引脚，保存 STM32F103C8T6 的设备对应；板卡 STEP/STL 可放到车上。
-- **STM32固件执行**：Renode执行自己的ELF/HEX/BIN，支持TIM1～4 PWM与方向输出、实际轮角产生的AB编码器反馈、GPIO/ADC1红外、超声波触发与回波、USART和GPIO简化夹爪。面板显示PC、MCU虚拟时间与串口，电脑视觉可发送自定义串口文本。先按 [固件执行](docs/固件执行.md) 配置72 MHz时钟与器件；DMA及其他器件需另外适配，运行速度取决于电脑和固件。
+- **嘉立创EDA资料导入**：导入标准版或专业版导出的 PADS 9.5 网表，查看器件和网络，在 STM32F103C8T6 封装图中选脚并连接设备；板卡 STEP/STL 可放到车上。
+- **STM32 固件执行**：Renode 执行自己的 ELF/AXF/HEX/BIN，支持 PWM、AB 编码器、红外 ADC1 扫描及 DMA、超声波回波、USART 及简化夹爪。通过 HAL 和标准外设库样件验证的功能、时钟配置和范围见 [固件执行](docs/固件执行.md)。
+- **调试与联调**：录制、导出和回放 PWM、轮速、编码器、红外、超声波、串口；向本机电脑程序提供无损相机帧和双向二进制串口。可调电机、传感器、灯光和通讯扰动，见 [调试与联调](docs/调试与联调.md)。
+- **队伍项目**：在 `scripts/team-project.bat` 将当前小车、接线、固件与自编程序保存为本地 ZIP，也可从 ZIP 创建独立练习目录，见 [队伍项目](docs/队伍项目.md)。
 - **手动探索**：按住面板方向按钮驾驶，松开停车；也可在 Webots 画面中使用 W/A/S/D，E 夹取或释放，空格停车。
 - **会员算法入口**：编辑 `simulator/controllers/moonlight/member_algorithm.py` 中的 `vision()` 和 `step()`；保存后点「重载算法」。模板默认停车。
 - **原始输入**：BGR 摄像头图像、红外、超声波、左右轮编码器与实测轮速。分辨率、传感器数量和安装位置可配置，默认 320×240、七路红外、前/左/右超声波。
@@ -73,7 +75,7 @@ sh start.sh
 
 ![赛题图2物块在虚拟摄像头中的外形](docs/images/block.png)
 
-电脑视觉队伍可在 `vision()` 中接入自己的处理程序，固件模式通过 `uart_tx` 返回自定义串口文本；OpenMV 队伍可保存原图，在真实板卡中读取处理。真实STM32板卡、手机串流和无线串口的专用接入需结合各队设备完成。
+电脑视觉队伍可在 `vision()` 中处理图像，通过 `uart_tx` 返回串口文字或字节；独立电脑程序也可使用本机接口。OpenMV 队伍可在真实板卡上回放保存的图像。实体 STM32、手机串流和无线串口的设备接入由各队按实际方案配置。
 
 ## 文件与说明
 
@@ -81,6 +83,8 @@ sh start.sh
 - [自定义小车](docs/自定义小车.md)：硬件字段、安装坐标与生效方式。
 - [导入自己的硬件](docs/导入自己的硬件.md)：SolidWorks导出、URDF关节绑定、STEP底盘和嘉立创EDA网表。
 - [固件执行](docs/固件执行.md)：STM32F103C8T6程序导入、接线、串口视觉、时钟与外设模型范围。
+- [调试与联调](docs/调试与联调.md)：波形回放、电脑视觉与串口、可控扰动参数。
+- [队伍项目](docs/队伍项目.md)：导出本地 ZIP，恢复到独立项目。
 | 入口或目录 | 内容 |
 | --- | --- |
 | `setup.bat`、`start.bat` | Windows 安装依赖与启动仿真；Linux/macOS 使用 `start.sh` |

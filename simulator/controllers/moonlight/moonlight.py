@@ -6,6 +6,7 @@ import json
 import math
 import os
 import sys
+import time
 import traceback
 # Webots R2025a 的 Windows 启动器可能以错误编码传递中文安装目录。
 # 用已找到的 controller 包位置恢复真实运行时路径，再加载其 DLL。
@@ -20,12 +21,17 @@ import numpy as np
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tools'))
 from firmware_bridge import FirmwareBridge
+from imperfections import Imperfections
+from vision_link import VisionLink
 CONFIG=json.loads((ROOT/'scene.json').read_text(encoding='utf-8'))
-DT=0.032
+STEP=int(CONFIG.get('step_ms',32))
+DT=STEP/1000
+PREVIEW_TICKS=192//STEP
 R=CONFIG['wheel_radius']
 HW=CONFIG['robot']
 Z=CONFIG['robot_origin_z']
 MAX_SPEED=HW['wheels']['max_speed_m_s']
+RESPONSE=-math.expm1(-DT/HW['wheels']['response_s']) if HW['wheels']['response_s']>0 else 1
 MODEL=HW.get('model',{'kind':'parametric'})
 IMPORTED=MODEL['kind']=='urdf'
 WHEEL_NAMES=[MODEL[side+'_joint'] if IMPORTED else side+'_motor' for side in ('left','right')]
@@ -60,8 +66,9 @@ IMAGE_WIDTH,IMAGE_HEIGHT=camera.getWidth(),camera.getHeight()
 for motor in motors:
     motor.setPosition(float('inf'))
     motor.setVelocity(0)
-for device in encoders+ir+list(sonar.values())+[camera]+list(joint_sensors.values()):device.enable(32)
-sim.getKeyboard().enable(32)
+for device in encoders+ir+list(sonar.values())+list(joint_sensors.values()):device.enable(STEP)
+camera.enable(32)
+sim.getKeyboard().enable(STEP)
 
 state=dict(mode='manual',running=False,group=2,color='red',carrying=False,
            elapsed=0.0,collision=False,grasped=False,placed=None,parked=False,aligned=False,
@@ -73,16 +80,36 @@ still=0.0
 algorithm=None
 firmware=None
 firmware_status={}
-pending_uart=''
+effects=Imperfections(HW.get('imperfections',{}))
 last_image=None
 tick=0
 last_collision_time=-10
 keyboard_driving=False
+trace_epoch=0
+trace_start=sim.getTime()
+trace=[]
+last_view_wall=time.monotonic()
+active_steps=0
+vision_link=None
 
 def log(text):
     state['message']=text
     state['events']=(state['events']+[f"{state['elapsed']:.1f}s · {text}"])[-8:]
     print('EVENT',text,flush=True)
+
+
+if port:=int(HW.get('vision_link_port',0)):
+    try:
+        vision_link=VisionLink(port)
+        log(f'本机图像与串口接口：127.0.0.1:{port}')
+    except OSError as error:
+        log(f'本机图像与串口接口未启动：{error}')
+
+
+def queue_uart(value, at=None):
+    if state['mode']=='firmware':
+        effects.send(state['elapsed'] if at is None else at,
+                     value.encode('utf-8') if isinstance(value,str) else bytes(value))
 
 def pose():
     p=car.getPosition();o=car.getOrientation()
@@ -116,9 +143,14 @@ def gripper(action):
         log('已释放：'+('目标圈正确' if state['placed'] and state['placed']['correct'] else '可查看最终放置位置'))
 
 def reset(group=None,color=None):
-    global still,last_encoder,algorithm,firmware,firmware_status,pending_uart
+    global still,last_encoder,algorithm,firmware,firmware_status,effects
+    global trace_epoch,trace_start
     if firmware:firmware.close()
-    firmware=None;firmware_status={};pending_uart=''
+    firmware=None;firmware_status={}
+    effects=Imperfections(HW.get('imperfections',{}))
+    trace_epoch+=1
+    trace_start=sim.getTime()
+    trace.clear()
     if group is not None:state['group']=max(1,int(group))
     if color in ('red','yellow','blue'):state['color']=color
     translation.setSFVec3f(CONFIG['start']+[Z])
@@ -136,7 +168,7 @@ def reset(group=None,color=None):
         algorithm=load_algorithm()
 
 def receive(message):
-    global algorithm,firmware,firmware_status,pending_uart
+    global algorithm,firmware,firmware_status
     data=json.loads(message)
     command=data.get('command')
     if command=='start':
@@ -148,7 +180,7 @@ def receive(message):
     elif command=='reset':reset(data.get('group'),data.get('color'))
     elif command=='mode':
         if firmware:firmware.close()
-        firmware=None;firmware_status={};pending_uart=''
+        firmware=None;firmware_status={};effects.queue.clear()
         state['mode']=data['value'];state['running']=False;manual[:]=[0,0]
         if state['mode'] in ('member','firmware'):
             algorithm=load_algorithm()
@@ -156,19 +188,25 @@ def receive(message):
     elif command=='reload':
         algorithm=load_algorithm()
         if firmware:firmware.close()
-        firmware=None;firmware_status={};pending_uart=''
+        firmware=None;firmware_status={};effects.queue.clear()
         state['running']=False
         log('程序已重载；点击开始运行，固件将从复位状态执行')
-    elif command=='uart':pending_uart+=str(data['value'])
+    elif command=='uart':queue_uart(data['value'])
     elif command=='drive':
+        if firmware:
+            firmware.close();firmware=None;firmware_status={};effects.queue.clear()
         manual[:]=data['value'];state['running']=True;state['mode']='manual'
     elif command=='gripper':gripper(data['value'])
     elif command=='joint':
         joint_motors[data['name']].setPosition(float(data['value']))
         log('关节目标已更新：'+data['name'])
     elif command=='snapshot':
+        pixels=camera.getImage()
+        if pixels is None:
+            log('请等待相机生成第一帧')
+            return
         destination=ROOT/'output';destination.mkdir(exist_ok=True)
-        raw=np.frombuffer(camera.getImage(),np.uint8).reshape((IMAGE_HEIGHT,IMAGE_WIDTH,4))[:,:,:3]
+        raw=np.frombuffer(pixels,np.uint8).reshape((IMAGE_HEIGHT,IMAGE_WIDTH,4))[:,:,:3]
         cv2.imencode('.png',raw)[1].tofile(str(destination/f'camera-{tick}.png'))
         log('摄像头原图已保存至 simulator/output 文件夹')
     elif command=='channel':
@@ -179,7 +217,7 @@ def receive(message):
         log('已放到超声波区域入口，车头朝左')
 
 capture=os.environ.get('YUEGUANG_CAPTURE_DIR')
-while sim.step(32)!=-1:
+while sim.step(STEP)!=-1:
     tick+=1
     while True:
         message=sim.wwiReceiveText()
@@ -206,45 +244,67 @@ while sim.step(32)!=-1:
     current_encoder=[d.getValue()*sign for d,sign in zip(encoders,WHEEL_SIGNS)]
     wheel_speed=[(a-b)*R/DT for a,b in zip(current_encoder,last_encoder)]
     last_encoder=current_encoder
-    image=np.frombuffer(camera.getImage(),np.uint8).reshape((IMAGE_HEIGHT,IMAGE_WIDTH,4))[:,:,:3].copy()
-    # 原始图像供会员自行识别，约每 0.2 秒更新面板。
-    if tick%6==0:
+    preview=tick%PREVIEW_TICKS==0
+    image=None
+    link_frame=vision_link is not None and tick%(64//STEP)==0
+    if preview or link_frame or (state['running'] and state['mode']=='member') or (capture and tick==960//STEP):
+        pixels=camera.getImage()
+        if pixels:
+            image=np.frombuffer(pixels,np.uint8).reshape((IMAGE_HEIGHT,IMAGE_WIDTH,4))[:,:,:3].copy()
+    if preview and image is not None:
         ok,jpg=cv2.imencode('.jpg',image,[cv2.IMWRITE_JPEG_QUALITY,70])
         last_image=base64.b64encode(jpg).decode() if ok else None
-    sensors=dict(ir=[max(0,min(1,d.getValue()/1000)) for d in ir],
-                 sonar={k:d.getValue() for k,d in sonar.items()},
+    if link_frame and image is not None:
+        ok,png=cv2.imencode('.png',image)
+        if ok:
+            vision_link.camera(png.tobytes(),round(sim.getTime(),6))
+    if vision_link:
+        queue_uart(vision_link.receive(bool(state['running'] and state['mode']=='firmware' and firmware)))
+    sensors=dict(ir=[effects.infrared(d.getValue()/1000) for d in ir],
+                 sonar={k:effects.sonar(d.getValue(),HW['sonar']['range_mm']/1000) for k,d in sonar.items()},
                  encoder=dict(zip(('left','right'),current_encoder)),
                  speed=dict(zip(('left','right'),wheel_speed)),
                  joints={name:sensor.getValue() for name,sensor in joint_sensors.items()},
                  carrying=state['carrying'],vision={})
     command=dict(left=0,right=0)
+    pwm,uart_in,uart_out=None,[],[]
     if state['running']:
+        cycle_start=state['elapsed']
         state['elapsed']+=DT
+        active_steps+=1
         try:
             if state['mode']=='manual':command=dict(zip(('left','right'),manual))
             elif state['mode']=='firmware':
-                if tick%6==0:
+                if preview and image is not None:
                     sensors['vision']=algorithm.vision(image)
-                    pending_uart+=sensors['vision'].get('uart_tx','')
-                firmware_status=firmware.step(sensors,DT,pending_uart)
-                pending_uart=''
+                    queue_uart(sensors['vision'].get('uart_tx',''),cycle_start)
+                # UART input waits for the next MCU sampling boundary.
+                uart_data=effects.receive(cycle_start)
+                uart_in=list(uart_data)
+                firmware_status=firmware.step(sensors,DT,uart_data)
+                firmware_status['uart_dropped']=effects.dropped
+                pwm=[firmware_status[side] for side in ('left','right')]
+                uart_out=firmware_status['uart']
+                if vision_link and uart_out:
+                    vision_link.transmit(uart_out)
                 command={side:firmware_status[side]*MAX_SPEED for side in ('left','right')}
                 command['gripper']=firmware_status.get('gripper')
             elif algorithm:
-                sensors['vision']=algorithm.vision(image)
+                if image is not None:
+                    sensors['vision']=algorithm.vision(image)
                 command=algorithm.step(sensors,DT)
             gripper(command.get('gripper'))
         except Exception as error:
             state['running']=False;log(f'程序错误，已停车：{error}');traceback.print_exc()
     for i,name in enumerate(('left','right')):
-        target=max(-MAX_SPEED,min(MAX_SPEED,float(command.get(name,0)))) if state['running'] else 0
-        actuated[i]+=(target-actuated[i])*DT/(HW['wheels']['response_s']+DT)
+        target=MAX_SPEED*effects.motor(i,float(command.get(name,0))/MAX_SPEED) if state['running'] else 0
+        actuated[i]+=(target-actuated[i])*RESPONSE
         motors[i].setVelocity(max(-motors[i].getMaxVelocity(),min(motors[i].getMaxVelocity(),actuated[i]/R*WHEEL_SIGNS[i])))
     if state['running']:
         for name,position in command.get('joints',{}).items():joint_motors[name].setPosition(float(position))
     if state['carrying']:
         block_position.setSFVec3f(grip_position());block.setVelocity([0]*6)
-    elif tick%8==0:state['placed']=place_result()
+    elif tick%(256//STEP)==0:state['placed']=place_result()
     p=pose();finish=CONFIG['finish']
     contact_centers=[(0,CONFIG['axle_length']/2),(0,-CONFIG['axle_length']/2),(HW['caster']['x_mm']/1000,0)]
     def contact_inside(local):
@@ -269,11 +329,20 @@ while sim.step(32)!=-1:
             if state['elapsed']-last_collision_time>1:
                 log('超声波区域发生接触');last_collision_time=state['elapsed']
             break
-    if tick%6==0:
+    trace.append(dict(t=round(sim.getTime()-trace_start,6), mode=state['mode'], running=state['running'],
+                      pwm=pwm, speed=wheel_speed, encoder=current_encoder, ir=sensors['ir'],
+                      sonar=sensors['sonar'], uart_in=uart_in, uart_out=uart_out, pose=p))
+    if preview:
+        now=time.monotonic()
+        rate=active_steps*DT/max(now-last_view_wall,.001)
+        last_view_wall=now
+        active_steps=0
         payload=dict(state,sensors=sensors,pose=p,image=last_image,firmware=firmware_status,
+                     trace=trace,trace_epoch=trace_epoch,rate=rate,
                      target_side='left' if state['group']%2==0 else 'right')
         sim.wwiSendText(json.dumps(payload,ensure_ascii=True,separators=(',',':')))
-    if capture and tick==30:
+        trace.clear()
+    if capture and tick==960//STEP:
         destination=Path(capture);destination.mkdir(parents=True,exist_ok=True)
         sim.exportImage(str(destination/'scene.png'),100)
         cv2.imencode('.png',image)[1].tofile(str(destination/'camera.png'))
@@ -284,4 +353,5 @@ while sim.step(32)!=-1:
         sim.simulationQuit(0)
 
 if firmware:firmware.close()
+if vision_link:vision_link.close()
 
