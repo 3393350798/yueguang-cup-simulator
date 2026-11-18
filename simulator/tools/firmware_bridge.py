@@ -47,7 +47,7 @@ class FirmwareBridge:
         platform = (self.folder/'f103.repl').read_text(encoding='utf-8')
         for name in ('rcc.py', 'adc.py'):
             platform = platform.replace('"'+name+'"', '"'+(self.folder/name).as_posix()+'"')
-        platform = platform.replace('PerformanceInMips: 8', 'PerformanceInMips: '+str(self.config.get('cpu_mips', 8)))
+        platform = platform.replace('PerformanceInMips: 8', 'PerformanceInMips: '+str(int(self.config.get('cpu_mips', 8))))
         (self.folder/'f103.repl').write_text(platform, encoding='utf-8')
         suffix = image.suffix.lower()
         shutil.copyfile(image, self.folder/('member'+suffix))

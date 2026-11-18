@@ -186,7 +186,7 @@ class HardwareEditor:
         self.field(form, 3, '数字红外黑白阈值（0～1）', self.firmware['ir_threshold'], 'ir_threshold')
         self.field(form, 4, '左右电机正向系数', ','.join(map(str,self.firmware['motor_signs'])), 'motor_signs')
         self.field(form, 5, '视觉与调试串口', self.firmware['vision_uart'], 'vision_uart', ['usart1','usart2','usart3'])
-        self.field(form, 6, 'CPU虚拟指令率（MIPS）', self.firmware.get('cpu_mips',8), 'cpu_mips')
+        self.field(form, 6, 'CPU虚拟指令率（MIPS，正整数）', int(self.firmware.get('cpu_mips',8)), 'cpu_mips')
         ttk.Label(f, text='先运行 scripts/setup-firmware.bat 安装固件后端；导入自己的已编译固件并在接线页绑定管脚。\n保存后启动场景，选择「STM32固件」并点击开始。重置场景会同时复位MCU。\n支持：TIM1～4 PWM1/PWM2、双方向电机驱动、AB编码器、GPIO红外、ADC1轮询、HC-SR04触发/回波、USART。\n时钟采用固定72MHz配置；ADC为即时转换模型。DMA、USB、I2C/SPI器件与任意整板电路需另行适配。\n固件只保存在本机 simulator/hardware/imported/；源工程请先在Keil/CubeIDE中编译。详细接线及限制见 docs/固件执行.md。', wraplength=870).pack(anchor='w', pady=20)
 
     def choose_firmware(self):
@@ -238,7 +238,7 @@ class HardwareEditor:
             resolve_pin(pin, self.board['mcu_reference'])
         self.firmware.update(renode=self.fields['renode'].get(), bin_address=self.fields['bin_address'].get(),
             encoder_cpr=int(self.fields['encoder_cpr'].get()), ir_threshold=float(self.fields['ir_threshold'].get()),
-            cpu_mips=float(self.fields['cpu_mips'].get()),
+            cpu_mips=int(self.fields['cpu_mips'].get()),
             motor_signs=[int(v) for v in self.fields['motor_signs'].get().split(',')], vision_uart=self.fields['vision_uart'].get())
         if self.firmware['cpu_mips'] <= 0 or self.firmware['encoder_cpr'] <= 0 or len(self.firmware['motor_signs']) != 2 or any(v not in (-1,1) for v in self.firmware['motor_signs']) or not 0 <= self.firmware['ir_threshold'] <= 1:
             raise ValueError('编码器计数应大于0，正向系数为1或-1，红外阈值在0～1之间。')
