@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>月光杯 · 仿真练习台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="moonlight.css?v=rules-2000"><link rel="stylesheet" href="trace.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>月光杯 · 仿真练习台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="moonlight.css?v=support"><link rel="stylesheet" href="trace.css"></head>
 <body>
-<header><div><span class="eyebrow">MOONLIGHT / ROBOTICS LAB</span><h1>月光杯<span>仿真练习台</span></h1></div><span id="connection" class="badge">连接场景中</span></header>
+<header><div><span class="eyebrow">MOONLIGHT / ROBOTICS LAB</span><h1>月光杯<span>仿真练习台</span></h1></div><span id="connection" class="badge" role="status">连接场景中</span></header>
 <main>
   <section class="workspace">
     <div class="section-head"><h2>赛场与轨迹</h2><span id="timer">00:00.0</span></div>
@@ -10,6 +10,10 @@
     <p class="map-note">2000 × 2000 mm 赛规定尺版 · 灰蓝线为实体挡板</p>
     <div class="toolbar"><button id="start" class="primary">开始运行</button><button id="pause">暂停 / 停车</button><button id="reset">重置场景</button><button id="reload">重载程序</button></div>
     <p id="message" role="status">先选择模式，再点击开始。会员模板初始为停车。</p>
+    <details class="support"><summary>故障诊断与求助</summary>
+      <p>一直等不到场景数据时，请检查 Webots 是否已加载赛场，确认后刷新面板。</p>
+      <p>遇到报错时，在仿真文件夹内双击 <code>scripts/export-diagnostics.bat</code>，生成后把 ZIP 发给负责人。</p>
+    </details>
     <div class="settings"><label>组号 <input id="group" type="number" min="1" value="2"></label><label>物块 <select id="color"><option value="red">红色</option><option value="yellow">黄色</option><option value="blue">蓝色</option></select></label><span>修改后点击「重置场景」</span></div>
     <div class="task-grid"><div><span>指定位置</span><strong id="target">左侧 · 红色</strong></div><div><span>抓取</span><strong id="grasp">等待</strong></div><div><span>放置结果</span><strong id="placed">等待</strong></div><div><span>终点停车</span><strong id="parking">等待</strong></div></div>
     <details><summary>运行事件</summary><ol id="events"></ol></details>

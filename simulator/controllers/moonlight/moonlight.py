@@ -8,6 +8,13 @@ import os
 import sys
 import time
 import traceback
+from runtime_log import CHOICES, RuntimeLog, choice, project_version
+
+ROOT=Path(__file__).resolve().parents[2]
+ALGORITHM_PATH=ROOT/'controllers/moonlight/member_algorithm.py'
+diagnostics=RuntimeLog(ROOT.parent)
+diagnostics.install_exception_hook()
+diagnostics.event('startup_begin',project_version=project_version(ROOT.parent))
 # Webots R2025a 的 Windows 启动器可能以错误编码传递中文安装目录。
 # 用已找到的 controller 包位置恢复真实运行时路径，再加载其 DLL。
 controller_spec=importlib.util.find_spec('controller')
@@ -18,13 +25,13 @@ from controller import Supervisor
 import cv2
 import numpy as np
 
-ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tools'))
-from firmware_bridge import FirmwareBridge
+from firmware_bridge import FirmwareBridge, diagnostic_reason
 from imperfections import Imperfections
 from vision_link import VisionLink
 from physical_gripper import PhysicalGripper
 from stage_trial import StageTrial, STAGES
+diagnostics.phase='scene_config'
 CONFIG=json.loads((ROOT/'scene.json').read_text(encoding='utf-8'))
 STEP=int(CONFIG.get('step_ms',32))
 DT=STEP/1000
@@ -41,17 +48,26 @@ MODEL=HW.get('model',{'kind':'parametric'})
 IMPORTED=MODEL['kind']=='urdf'
 WHEEL_NAMES=[MODEL[side+'_joint'] if IMPORTED else side+'_motor' for side in ('left','right')]
 WHEEL_SIGNS=[MODEL.get(side+'_sign',1) if IMPORTED else 1 for side in ('left','right')]
+diagnostics.event('config_ready',step_ms=STEP,physics_step_ms=CONFIG.get('physics_step_ms',STEP),
+                  field_revision=choice(CONFIG.get('field_revision','practice-legacy'),'field_revision','custom'),
+                  robot_kind=choice(MODEL['kind'],'robot_kind','unknown'),
+                  gripper_kind=CONFIG.get('gripper',{}).get('kind','none'))
 
 def angle(v):
     return (v+math.pi)%(2*math.pi)-math.pi
 
 def load_algorithm():
-    path=ROOT/'controllers/moonlight/member_algorithm.py'
-    spec=importlib.util.spec_from_file_location('practice_algorithm',path)
+    previous_phase=diagnostics.phase
+    diagnostics.phase='algorithm_load'
+    spec=importlib.util.spec_from_file_location('practice_algorithm',ALGORITHM_PATH)
     module=importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.Algorithm()
+    instance=module.Algorithm()
+    record('algorithm_loaded')
+    diagnostics.phase=previous_phase
+    return instance
 
+diagnostics.phase='webots_setup'
 sim=Supervisor()
 car=sim.getSelf()
 block=sim.getFromDef('BLOCK')
@@ -117,18 +133,52 @@ last_view_wall=time.monotonic()
 active_steps=0
 vision_link=None
 
+def update_log_context():
+    diagnostics.mode=state['mode']
+    diagnostics.sim_ms=round(sim.getTime()*1000)
+    diagnostics.round=round_id
+
+def record(name, **fields):
+    update_log_context()
+    diagnostics.event(name, **fields)
+
+def report_error(error):
+    update_log_context()
+    reason=diagnostic_reason(error) if diagnostics.phase.startswith('firmware_') else None
+    line=None
+    if diagnostics.phase in ('algorithm_load','member_vision','member_step'):
+        if type(error) in (SyntaxError,IndentationError,TabError) and error.filename==str(ALGORITHM_PATH):
+            line=error.lineno
+        frame=BaseException.__getattribute__(error,'__traceback__')
+        while frame is not None:
+            if frame.tb_frame.f_code.co_filename==str(ALGORITHM_PATH):
+                line=frame.tb_lineno
+            frame=frame.tb_next
+    diagnostics.error(error,reason=reason,member_line=line)
+
 def log(text):
     state['message']=text
     state['events']=(state['events']+[f"{state['elapsed']:.1f}s · {text}"])[-8:]
     print('EVENT',text,flush=True)
 
 
+diagnostics.phase='vision_link'
 if port:=int(HW.get('vision_link_port',0)):
     try:
         vision_link=VisionLink(port)
         log(f'本机图像与串口接口：127.0.0.1:{port}')
+        record('vision_link_ready',vision_link=True)
     except OSError as error:
         log(f'本机图像与串口接口未启动：{error}')
+        report_error(error)
+
+diagnostics.phase='scene_config'
+try:
+    firmware_settings=json.loads((ROOT/'firmware.json').read_text(encoding='utf-8-sig'))
+    configured=bool(firmware_settings.get('image')) if isinstance(firmware_settings,dict) else False
+except (OSError,UnicodeError,ValueError) as error:
+    report_error(error)
+    configured=False
 
 
 def queue_uart(value, at=None):
@@ -191,20 +241,33 @@ def observe_gripper():
     if observed['holding'] and not state['carrying']:
         state['grasped']=True
         log('夹爪已将物块提离地面')
+        record('gripper_holding')
     elif state['carrying'] and not observed['holding']:
         log('夹爪已失去夹持')
+        record('gripper_released')
     state['carrying']=observed['holding']
     state['placed']=place_result() if (
         state['grasped'] and not observed['touching'] and observed['settled'] and observed['upright']
     ) else None
     return observed
 
+def close_firmware(reason):
+    global firmware,firmware_status
+    if firmware is not None:
+        previous_phase=diagnostics.phase
+        diagnostics.phase='firmware_stop'
+        firmware.close()
+        record('firmware_closed',reason=reason)
+        diagnostics.phase=previous_phase
+    firmware=None;firmware_status={}
+
+
 def reset(group=None,color=None,stage=None,limit=None):
-    global still,last_encoder,algorithm,firmware,firmware_status,effects
+    global still,last_encoder,algorithm,effects
     global trace_epoch,trace_start
     global trial,round_id,round_result,ready_at,last_collision_time,round_limit,round_error
-    if firmware:firmware.close()
-    firmware=None;firmware_status={}
+    diagnostics.phase='round_reset'
+    close_firmware('reset')
     effects=Imperfections(HW.get('imperfections',{}))
     trace_epoch+=1
     trace_start=sim.getTime()
@@ -236,6 +299,7 @@ def reset(group=None,color=None,stage=None,limit=None):
     state.update(running=False,carrying=False,elapsed=0,collision=False,grasped=False,
                  placed=None,parked=False,aligned=False,events=[],message='已就位：'+STAGES[trial.stage])
     still=0
+    record('round_reset',stage=trial.stage)
     if state['mode'] in ('member','firmware'):
         algorithm=load_algorithm()
 
@@ -248,13 +312,18 @@ def finish_round(reason):
     manual[:]=[0,0]
     round_result=dict(trial.report(state,pose()),id=round_id,reason=reason)
     log('本轮结果已记录')
+    previous_phase=diagnostics.phase
+    diagnostics.phase='round_end'
+    record('round_finished',reason=reason,stage=trial.stage)
+    diagnostics.phase=previous_phase
 
 
 def receive(message):
-    global algorithm,firmware,firmware_status,round_error,effects
+    global algorithm,firmware,round_error,effects
     data=json.loads(message)
     command=data.get('command')
     if command=='start':
+        diagnostics.phase='panel_start'
         if sim.getTime()<ready_at:
             log('等待车体和物块停稳后开始')
             return
@@ -263,37 +332,56 @@ def receive(message):
             return
         round_error=None
         if state['mode']=='firmware' and firmware is None:
+            diagnostics.phase='firmware_start'
+            record('firmware_start_requested')
             firmware=FirmwareBridge()
             log('STM32固件已加载，开始同步执行')
+            record('firmware_started')
+            diagnostics.phase='panel_start'
         if state['elapsed']==0:
             effects=Imperfections(HW.get('imperfections',{}))
-        state['running']=True
-    elif command=='pause':state['running']=False;manual[:]=[0,0]
+        if not state['running']:
+            state['running']=True
+            record('run_started',stage=trial.stage)
+    elif command=='pause':
+        diagnostics.phase='panel_pause'
+        if state['running']:
+            record('run_paused',reason='manual',firmware_active=firmware is not None)
+        state['running']=False;manual[:]=[0,0]
     elif command=='reset':reset(data.get('group'),data.get('color'),data.get('stage'),data.get('limit'))
     elif command=='finish_round':
         finish_round('manual')
     elif command=='mode':
-        if firmware:firmware.close()
-        firmware=None;firmware_status={};effects.queue.clear()
+        diagnostics.phase='panel_mode'
+        if data['value'] not in CHOICES['mode']:
+            raise ValueError('未知的控制模式。')
+        close_firmware('switch_mode')
+        effects.queue.clear()
         state['mode']=data['value'];state['running']=False;manual[:]=[0,0]
+        record('mode_changed')
         if state['mode'] in ('member','firmware'):
             algorithm=load_algorithm()
         log('模式已切换，点击开始运行')
     elif command=='reload':
+        diagnostics.phase='panel_reload'
         algorithm=load_algorithm()
-        if firmware:firmware.close()
-        firmware=None;firmware_status={};effects.queue.clear()
+        close_firmware('reload')
+        effects.queue.clear()
         state['running']=False
         log('程序已重载；点击开始运行，固件将从复位状态执行')
     elif command=='uart':queue_uart(data['value'])
     elif command=='drive':
+        diagnostics.phase='panel_drive'
         if round_result is not None or sim.getTime()<ready_at:
             return
         if state['elapsed']==0 and not state['running']:
             effects=Imperfections(HW.get('imperfections',{}))
         if firmware:
-            firmware.close();firmware=None;firmware_status={};effects.queue.clear()
+            close_firmware('manual_override');effects.queue.clear()
+        previous_mode=state['mode']
         manual[:]=data['value'];state['running']=True;state['mode']='manual'
+        if previous_mode!='manual':
+            record('mode_changed',reason='manual_override')
     elif command=='gripper':
         action=data['value']
         if claw.command(action):
@@ -314,17 +402,26 @@ def receive(message):
         reset(stage='channel')
 
 capture=os.environ.get('YUEGUANG_CAPTURE_DIR')
+diagnostics.phase='webots_setup'
 car.saveState('practice-ready')
+diagnostics.phase='controller_ready'
+record('controller_ready',ir_count=len(ir),sonar_count=len(sonar),stage=trial.stage,
+       vision_link=vision_link is not None,firmware_configured=configured)
+diagnostics.phase='simulation_step'
 while sim.step(STEP)!=-1:
     tick+=1
     while True:
         message=sim.wwiReceiveText()
         if message is None:break
         if not message.startswith('{'):continue
+        diagnostics.phase='panel_message'
+        update_log_context()
         try:receive(message)
         except Exception as error:
+            report_error(error)
             round_error=str(error)
             state['running']=False;log(f'算法或命令错误：{error}');traceback.print_exc()
+    diagnostics.phase='simulation_step'
     key=sim.getKeyboard().getKey()
     if key!=-1 and state['mode']=='manual' and round_result is None and sim.getTime()>=ready_at:
         keyboard_driving=True
@@ -363,7 +460,9 @@ while sim.step(STEP)!=-1:
             vision_link.camera(png.tobytes(),round(sim.getTime(),6))
     if vision_link:
         queue_uart(vision_link.receive(bool(state['running'] and state['mode']=='firmware' and firmware)))
+    diagnostics.phase='gripper'
     grasp=observe_gripper()
+    diagnostics.phase='simulation_step'
     sensors=dict(ir=[calibrated_ir(i,d.getValue()/1000) for i,d in enumerate(ir)],
                  sonar={k:calibrated_sonar(k,d.getValue()) for k,d in sonar.items()},
                  encoder=dict(zip(('left','right'),current_encoder)),
@@ -380,9 +479,11 @@ while sim.step(STEP)!=-1:
             if state['mode']=='manual':command=dict(zip(('left','right'),manual))
             elif state['mode']=='firmware':
                 if preview and image is not None:
+                    diagnostics.phase='member_vision'
                     sensors['vision']=algorithm.vision(image)
                     queue_uart(sensors['vision'].get('uart_tx',''),cycle_start)
                 # UART input waits for the next MCU sampling boundary.
+                diagnostics.phase='firmware_step'
                 uart_data=effects.receive(cycle_start)
                 uart_in=list(uart_data)
                 firmware_status=firmware.step(sensors,DT,uart_data)
@@ -396,19 +497,25 @@ while sim.step(STEP)!=-1:
                 command['gripper_lift']=firmware_status.get('gripper_lift')
             elif algorithm:
                 if image is not None:
+                    diagnostics.phase='member_vision'
                     sensors['vision']=algorithm.vision(image)
+                diagnostics.phase='member_step'
                 command=algorithm.step(sensors,DT)
+            diagnostics.phase='actuator'
             claw.command(command.get('gripper'))
             claw.command(command.get('gripper_lift'))
         except Exception as error:
+            report_error(error)
             round_error=str(error)
             state['running']=False;log(f'程序错误，已停车：{error}');traceback.print_exc()
+    diagnostics.phase='actuator'
     for i,name in enumerate(('left','right')):
         target=MAX_SPEED*effects.motor(i,float(command.get(name,0))/MAX_SPEED) if state['running'] else 0
         actuated[i]+=(target-actuated[i])*RESPONSE
         motors[i].setVelocity(max(-motors[i].getMaxVelocity(),min(motors[i].getMaxVelocity(),actuated[i]/R*WHEEL_SIGNS[i])))
     if state['running']:
         for name,position in command.get('joints',{}).items():joint_motors[name].setPosition(float(position))
+    diagnostics.phase='simulation_step'
     p=pose();finish=CONFIG['finish']
     contact_centers=[(0,CONFIG['axle_length']/2),(0,-CONFIG['axle_length']/2),(HW['caster']['x_mm']/1000,0)]
     def contact_inside(local):
@@ -426,11 +533,15 @@ while sim.step(STEP)!=-1:
         ext_y=(abs(math.sin(p[2]))*width+abs(math.cos(p[2]))*height)/2
         state['aligned']=(abs(p[0]-finish[0])+ext_x<=finish_half_size[0]
                           and abs(p[1]-finish[1])+ext_y<=finish_half_size[1] and yaw_error<=math.radians(10))
+    diagnostics.phase='contact'
     wall_contact=touches_channel_wall()
     if wall_contact:
+        if not state['collision']:
+            record('wall_contact',stage=trial.stage)
         state['collision']=True
         if state['elapsed']-last_collision_time>1:
             log('超声波区域发生接触');last_collision_time=state['elapsed']
+    diagnostics.phase='simulation_step'
     if round_result is None and sim.getTime()>=ready_at:
         trial.update(p,grasp,wall_contact,firmware_status.get('sonar_triggers',0))
     if state['running'] and round_limit is not None and state['elapsed']+1e-9>=round_limit:
@@ -461,6 +572,8 @@ while sim.step(STEP)!=-1:
             (Path(capture)/'result.json').write_text(json.dumps(dict(state,pose=pose()),ensure_ascii=False,indent=2),encoding='utf-8')
         sim.simulationQuit(0)
 
-if firmware:firmware.close()
+diagnostics.phase='shutdown'
+close_firmware('shutdown')
 if vision_link:vision_link.close()
+diagnostics.event('shutdown',reason='shutdown')
 

@@ -7,13 +7,14 @@
 ## 开始使用
 
 1. 安装 [Webots R2025a](https://github.com/cyberbotics/webots/releases/tag/R2025a) 和 [Python 3.11～3.13](https://www.python.org/downloads/)。安装 Python 时选择加入 PATH。
-2. [下载 v0.6.2 ZIP](https://github.com/3393350798/yueguang-cup-simulator/releases/download/v0.6.2/yueguang-cup-simulator-v0.6.2.zip) 并解压。在 Windows 下，双击 `setup.bat`，等待 Python 环境与依赖安装完毕，再关闭窗口。
+2. [下载 v0.6.3 ZIP](https://github.com/3393350798/yueguang-cup-simulator/releases/download/v0.6.3/yueguang-cup-simulator-v0.6.3.zip) 并解压。在 Windows 下，双击 `setup.bat`，等待 Python 环境与依赖安装完毕，再关闭窗口。
 3. 双击 `start.bat`，等待 Webots 加载赛场，脚本会自动打开中文浏览器面板。
 4. 可先使用「手动探索」查看场景和传感器；编写程序后选择「会员算法」，点击「重载算法」和「开始运行」。
 
 从旧版本升级时，先重新运行 `setup.bat` 安装模型导入依赖。需要导入 STEP 时，再双击 `scripts/setup-cad.bat` 安装转换组件。需要执行 STM32 固件时，运行 `scripts/setup-firmware.bat` 安装 Renode 后端，再通过 `scripts/import-hardware.bat` 的固件页导入程序并绑定引脚。
 
 启动遇到问题时，双击 `scripts/check-setup.bat`，按队伍接入方式运行[启动自检](docs/启动自检.md)。
+需要发给负责人排查时，重现一次问题，再双击 `scripts/export-diagnostics.bat`。把 `output/` 下生成的 ZIP 和你遇到的现象一起发出。即使面板打不开也可导出，见[故障诊断](docs/故障诊断.md)。
 
 启动前关闭旧的同项目 Webots 窗口。Webots 和浏览器需要同时保持打开。项目支持中文目录，Windows 启动脚本会从安装信息或 `WEBOTS_HOME` 查找 Webots。自定义安装位置可在项目目录执行：
 

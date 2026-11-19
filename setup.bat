@@ -1,5 +1,3 @@
 @echo off
-cd /d "%~dp0"
-python -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements\core.txt
-pause
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\setup.ps1" %*
+exit /b %errorlevel%

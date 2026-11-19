@@ -14,6 +14,34 @@ from firmware.pins import resolve_pin
 ROOT = Path(__file__).resolve().parents[1]
 
 
+class FirmwareImageMissing(ValueError):
+    pass
+
+
+class RenodeMissing(FileNotFoundError):
+    pass
+
+
+class MotorPinsMissing(ValueError):
+    pass
+
+
+class RenodeLaunchFailed(RuntimeError):
+    pass
+
+
+class RenodeConnectionClosed(RuntimeError):
+    pass
+
+
+def diagnostic_reason(error):
+    return {
+        FirmwareImageMissing:'firmware_missing', RenodeMissing:'renode_missing',
+        MotorPinsMissing:'motor_pins_missing', RenodeLaunchFailed:'renode_launch_failed',
+        RenodeConnectionClosed:'renode_connection_closed',
+    }.get(type(error))
+
+
 def find_renode(setting=''):
     candidates = [setting, os.environ.get('RENODE', ''), shutil.which('Renode.exe'), shutil.which('renode')]
     for folder in (ROOT.parent/'.local/renode', ROOT.parent.parent/'.local/renode', Path('C:/Program Files/Renode')):
@@ -22,7 +50,7 @@ def find_renode(setting=''):
     for item in candidates:
         if item and Path(item).is_file():
             return str(Path(item).resolve())
-    raise FileNotFoundError('请先运行 scripts/setup-firmware.bat，或在固件配置中选择 Renode.exe。')
+    raise RenodeMissing('请先运行 scripts/setup-firmware.bat，或在固件配置中选择 Renode.exe。')
 
 
 class FirmwareBridge:
@@ -31,13 +59,15 @@ class FirmwareBridge:
         board = board or json.loads((ROOT/'board.json').read_text(encoding='utf-8-sig'))
         image = self.config.get('image')
         if not image:
-            raise ValueError('请在 scripts/import-hardware.bat 的固件页中导入 ELF / HEX / BIN。')
+            raise FirmwareImageMissing('请在 scripts/import-hardware.bat 的固件页中导入 ELF / HEX / BIN。')
         image = (ROOT/image).resolve()
+        if not image.is_file():
+            raise FirmwareImageMissing('找不到已导入的固件镜像，请重新导入。')
         executable = find_renode(self.config.get('renode', ''))
         bindings = {role: resolve_pin(pin, board.get('mcu_reference', '')) for role, pin in board['bindings'].items()}
         for side in ('left','right'):
             if not all(side+suffix in bindings for suffix in ('_pwm','_in1','_in2')):
-                raise ValueError('请填写'+side+'_pwm / '+side+'_in1 / '+side+'_in2 三个电机驱动引脚。')
+                raise MotorPinsMissing('请填写'+side+'_pwm / '+side+'_in1 / '+side+'_in2 三个电机驱动引脚。')
         self.folder = Path(tempfile.mkdtemp(prefix='moonlight-fw-'))
         self.process = self.socket = self.stream = None
         self.uart = ''
@@ -68,16 +98,19 @@ class FirmwareBridge:
         (self.folder/'run.resc').write_text('\n'.join(lines)+'\n', encoding='utf-8')
         self.log = (self.folder/'renode.log').open('wb')
         env = dict(os.environ, YUEGUANG_FW_SESSION=str(self.folder))
-        self.process = subprocess.Popen([executable, '--disable-xwt', '--console', '--plain', str(self.folder/'run.resc')],
-            cwd=self.folder, env=env, stdin=subprocess.PIPE, stdout=self.log, stderr=self.log,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
         try:
+            try:
+                self.process = subprocess.Popen([executable, '--disable-xwt', '--console', '--plain', str(self.folder/'run.resc')],
+                    cwd=self.folder, env=env, stdin=subprocess.PIPE, stdout=self.log, stderr=self.log,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+            except OSError as error:
+                raise RenodeLaunchFailed('无法启动 Renode。') from error
             deadline = time.monotonic()+35
             while not (self.folder/'port').exists():
                 startup_log = (self.folder/'renode.log').read_text(encoding='utf-8', errors='replace')
                 if self.process.poll() is not None or time.monotonic() > deadline or 'There was an error' in startup_log:
                     self.log.flush()
-                    raise RuntimeError('Renode未能加载固件：'+(self.folder/'renode.log').read_text(encoding='utf-8', errors='replace')[-2200:])
+                    raise RenodeLaunchFailed('Renode未能加载固件：'+(self.folder/'renode.log').read_text(encoding='utf-8', errors='replace')[-2200:])
                 time.sleep(.1)
             self.socket = socket.create_connection(('127.0.0.1', int((self.folder/'port').read_text())), timeout=10)
             self.stream = self.socket.makefile('rwb')
@@ -92,7 +125,7 @@ class FirmwareBridge:
         self.stream.flush()
         line = self.stream.readline()
         if not line:
-            raise RuntimeError('Renode执行连接已关闭。')
+            raise RenodeConnectionClosed('Renode执行连接已关闭。')
         result = json.loads(line)
         if 'error' in result:
             raise RuntimeError(result['error'])

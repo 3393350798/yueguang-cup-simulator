@@ -53,11 +53,21 @@ function send(command,extra={}){
   else pending.push(payload);
 }
 const observeTrial=initTrials(send);
+function connectionStatus(message, warning=false){
+  const badge=$('connection');
+  if(badge.textContent!==message)badge.textContent=message;
+  badge.classList.toggle('warn',warning);
+}
 function connect(){
   const url=new URL(location.href);url.protocol=location.protocol==='https:'?'wss:':'ws:';
   url.pathname=url.pathname.substring(0,url.pathname.indexOf('/robot_windows/')+1);url.search='';url.hash='';
   socket=new WebSocket(url);
-  socket.onopen=()=>{socket.send('robot:'+ (new URLSearchParams(location.search).get('name')||'Moonlight') +':init robot window');for(const p of pending)socket.send('robot:'+(new URLSearchParams(location.search).get('name')||'Moonlight')+':'+p);pending=[];};
+  socket.onopen=()=>{
+    connectionStatus('等待场景数据');
+    socket.send('robot:'+ (new URLSearchParams(location.search).get('name')||'Moonlight') +':init robot window');
+    for(const p of pending)socket.send('robot:'+(new URLSearchParams(location.search).get('name')||'Moonlight')+':'+p);
+    pending=[];
+  };
   socket.onmessage=event=>{
     if(typeof event.data!=='string')return;
     for(const line of event.data.split('\n')){
@@ -67,7 +77,7 @@ function connect(){
       if(packet.message.startsWith('{'))render(JSON.parse(packet.message));
     }
   };
-  socket.onclose=()=>{$('connection').textContent='场景已断开';};
+  socket.onclose=()=>connectionStatus(state?'场景已断开 · 刷新重连':'场景未连通 · 刷新重试',true);
 }
 function render(data){
   if(!state){$('group').value=data.group;$('color').value=data.color;}
@@ -76,7 +86,7 @@ function render(data){
   observeTrial(data);
   trace(data.trace_epoch,data.trace);
   $('step-badge').textContent=(config.step_ms??32)+' ms / 周期'+(data.running&&Number.isFinite(data.rate)?' · '+data.rate.toFixed(2)+'×':'');
-  $('connection').textContent=data.running?'运行中':'已连接 · 待运行';
+  connectionStatus(data.running?'运行中':'已连接 · 待运行');
   $('timer').textContent=`${String(Math.floor(data.elapsed/60)).padStart(2,'0')}:${(data.elapsed%60).toFixed(1).padStart(4,'0')}`;
   $('message').textContent=data.message;
   $('mode').value=data.mode;
