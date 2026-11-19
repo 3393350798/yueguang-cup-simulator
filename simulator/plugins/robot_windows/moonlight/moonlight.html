@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>月光杯 · 仿真练习台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="moonlight.css?v=support"><link rel="stylesheet" href="trace.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>月光杯 · 仿真练习台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="moonlight.css?v=0.6.5"><link rel="stylesheet" href="trace.css"></head>
 <body>
 <header><div><span class="eyebrow">MOONLIGHT / ROBOTICS LAB</span><h1>月光杯<span>仿真练习台</span></h1></div><span id="connection" class="badge" role="status">连接场景中</span></header>
 <main>
@@ -74,7 +74,7 @@
         <button id="uart-send">发送</button>
       </div>
     </section>
-    <section class="card"><div class="section-head"><h2>车载摄像头</h2><button id="snapshot" class="small">保存原图</button></div><div class="camera"><img id="camera" alt="虚拟车载摄像头画面"><span id="camera-empty">等待摄像头画面</span></div><p class="hint">原始 BGR 摄像头图像，图像识别由会员自行编写。</p></section>
+    <section class="card"><div class="section-head"><h2>车载摄像头</h2><button id="snapshot" class="small">保存原图</button></div><div class="camera"><img id="camera" alt="虚拟车载摄像头画面"><span id="camera-empty">等待摄像头画面</span></div><p class="hint">网页显示压缩预览；「保存原图」可导出完整分辨率的 PNG。</p></section>
     <section class="card"><div class="section-head"><h2>传感器</h2><span class="mini">红外归一化读数</span></div><div id="ir" class="ir"></div><div id="sonars" class="sonars"></div><div class="wheel"><span id="wheel-left">左轮 0.000 m/s</span><span id="wheel-right">右轮 0.000 m/s</span></div><span id="collision" class="badge">区域内无碰撞记录</span></section>
     <section class="card" id="joint-card" hidden><h2>装配体关节</h2><div id="joint-controls"></div><p class="hint">旋转关节使用rad，移动关节使用m；填写目标位置后点击设置。</p></section>
     <section class="card"><h2>当前小车硬件</h2><p id="hardware-summary"></p><p id="board-summary"></p><p>关闭 Webots 后，双击 scripts/import-hardware.bat 导入模型和嘉立创EDA网表；scripts/configure.bat 可编辑尺寸、传感器。保存后重新运行 start.bat。</p></section>

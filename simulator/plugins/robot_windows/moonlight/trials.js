@@ -70,7 +70,8 @@ export function initTrials(send){
   return state=>{
     current=state;
     if(!state.trial)return;
-    $('current').textContent=names[state.trial.stage]+(state.resetting?' · 等待停稳':'');
+    const stageText=names[state.trial.stage]+(state.resetting?' · 等待停稳':'');
+    if($('current').textContent!==stageText)$('current').textContent=stageText;
     $('finish').disabled=Boolean(state.round_result)||state.resetting;
     if(batch && state.mode!==batch.mode){
       batch=null;$('batch').textContent='开始多轮';redraw();

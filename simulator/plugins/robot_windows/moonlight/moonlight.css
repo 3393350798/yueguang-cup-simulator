@@ -3,4 +3,5 @@
 .support summary{cursor:pointer;width:fit-content}
 .support p{line-height:1.65;margin:8px 0 0}
 .support code{overflow-wrap:anywhere}
+#map{background-size:100% 100%;background-repeat:no-repeat}
 @media(max-width:720px){header{flex-wrap:wrap;gap:8px}header>.badge{display:inline-block}}

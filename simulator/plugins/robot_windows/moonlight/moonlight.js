@@ -1,7 +1,13 @@
-const {default:config}=await import('./scene.js?v='+Date.now());
-const {initTrace}=await import('./trace.js?v='+Date.now());
-const {initTrials}=await import('./trials.js?v='+Date.now());
-const $=id=>document.getElementById(id);
+const build=new URLSearchParams(location.search).get('v')||Date.now();
+const [{default:config},{initTrace},{initTrials}]=await Promise.all(
+  ['scene','trace','trials'].map(name=>import('./'+name+'.js?v='+encodeURIComponent(build)))
+);
+const elements=new Map();
+const $=id=>{
+  if(!elements.has(id))elements.set(id,document.getElementById(id));
+  return elements.get(id);
+};
+const setText=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
 const colors={red:'红色',yellow:'黄色',blue:'蓝色'};
 const hardware=config.robot;
 const deviceNames={front:'前距',left:'左距',right:'右距',rear:'后距'};
@@ -27,7 +33,7 @@ for(const joint of model.joints||[]){
 document.querySelector('.camera').style.aspectRatio=`${hardware.camera.width}/${hardware.camera.height}`;
 const help={manual:'按住方向按钮驾驶，松开停车。Webots 中用 W/A/S/D 驾驶，E 切换开合，Q 切换升降，空格停车。',member:'在 member_algorithm.py 中填写自己的算法。模板初始为停车，保存后点击重载算法。',firmware:'先用 scripts/import-hardware.bat 导入固件并绑定管脚。点击开始后同步执行MCU；暂停冻结MCU，重置复位MCU。'};
 const uartInput=$('uart-input'), uartFormat=$('uart-format');
-uartFormat.onchange=()=>{uartInput.placeholder=uartFormat.value==='hex'?'例如 A5 00 FF':'串口文本';uartInput.setCustomValidity('');};
+uartFormat.onchange=()=>{uartInput.placeholder=uartFormat.value==='hex'?'例如 A5 00 FF':'串口文本';uartInput.setCustomValidity('');schedulePaint();};
 uartInput.oninput=()=>uartInput.setCustomValidity('');
 $('uart-send').onclick=()=>{
   let value=uartInput.value+'\n';
@@ -42,14 +48,24 @@ $('uart-send').onclick=()=>{
   }
   send('uart',{value});uartInput.value='';
 };
-let state=null,path=[],socket=null,pending=[];
-const image=new Image();
+let state=null,path=[],socket=null,pending=[],paintFrame=0;
+let paintedMode, paintedPose, paintedBlock, paintedColor, paintedPathEnd, mapDirty=true;
+let previewFrame, appliedPreview, cameraVisible=false, eventKey='';
+let panelSession, panelTick=-1;
+const robotName=new URLSearchParams(location.search).get('name')||'Moonlight';
+const mapCanvas=$('map'), mapContext=mapCanvas.getContext('2d');
+const camera=$('camera');
+const irCells=[], sonarCells=new Map();
 const base=new URL('track.png',location.href);
-base.searchParams.set('v',Date.now());
-image.src=base.href;
+base.searchParams.set('v',build);
+mapCanvas.style.backgroundImage='url("'+base.href+'")';
+new IntersectionObserver(([entry])=>{
+  cameraVisible=entry.isIntersecting;
+  if(cameraVisible)schedulePaint();
+}).observe(camera.parentElement);
 function send(command,extra={}){
   const payload=JSON.stringify({command,...extra});
-  if(socket?.readyState===1)socket.send(`robot:${new URLSearchParams(location.search).get('name')||'Moonlight'}:${payload}`);
+  if(socket?.readyState===1)socket.send(`robot:${robotName}:${payload}`);
   else pending.push(payload);
 }
 const observeTrial=initTrials(send);
@@ -64,8 +80,8 @@ function connect(){
   socket=new WebSocket(url);
   socket.onopen=()=>{
     connectionStatus('等待场景数据');
-    socket.send('robot:'+ (new URLSearchParams(location.search).get('name')||'Moonlight') +':init robot window');
-    for(const p of pending)socket.send('robot:'+(new URLSearchParams(location.search).get('name')||'Moonlight')+':'+p);
+    socket.send('robot:'+robotName+':init robot window');
+    for(const p of pending)socket.send('robot:'+robotName+':'+p);
     pending=[];
   };
   socket.onmessage=event=>{
@@ -73,57 +89,107 @@ function connect(){
     for(const line of event.data.split('\n')){
       if(!line.startsWith('robot:'))continue;
       const packet=JSON.parse(line.slice(6));
-      if(packet.name!==(new URLSearchParams(location.search).get('name')||'Moonlight'))continue;
-      if(packet.message.startsWith('{'))render(JSON.parse(packet.message));
+      if(packet.name!==robotName)continue;
+      if(packet.message.startsWith('{'))receive(JSON.parse(packet.message));
     }
   };
   socket.onclose=()=>connectionStatus(state?'场景已断开 · 刷新重连':'场景未连通 · 刷新重试',true);
 }
-function render(data){
+function schedulePaint(){
+  if(!paintFrame)paintFrame=requestAnimationFrame(()=>{
+    paintFrame=0;
+    if(state)render(state);
+  });
+}
+function receive(data){
+  // Webots can relay the same update more than once when multiple clients connect.
+  if(data.panel_session){
+    if(data.panel_session!==panelSession){panelSession=data.panel_session;panelTick=-1;path=[];mapDirty=true;}
+    if(data.panel_tick<=panelTick)return;
+    panelTick=data.panel_tick;
+  }
   if(!state){$('group').value=data.group;$('color').value=data.color;}
-  if(data.trace_epoch!==state?.trace_epoch)path=[];
+  if(data.trace_epoch!==state?.trace_epoch){path=[];mapDirty=true;}
   state=data;
+  // Consume every batch even if several arrive before the next browser paint.
   observeTrial(data);
-  trace(data.trace_epoch,data.trace);
-  $('step-badge').textContent=(config.step_ms??32)+' ms / 周期'+(data.running&&Number.isFinite(data.rate)?' · '+data.rate.toFixed(2)+'×':'');
-  connectionStatus(data.running?'运行中':'已连接 · 待运行');
-  $('timer').textContent=`${String(Math.floor(data.elapsed/60)).padStart(2,'0')}:${(data.elapsed%60).toFixed(1).padStart(4,'0')}`;
-  $('message').textContent=data.message;
-  $('mode').value=data.mode;
-  $('mode-help').textContent=help[data.mode];
-  $('reload').textContent=data.mode==='firmware'?'重载固件与视觉':'重载算法';
-  $('firmware-card').hidden=data.mode!=='firmware';
-  const fw=data.firmware||{};
-  $('firmware-status').textContent=fw.pc?`PC ${fw.pc} · MCU ${fw.virtual_s.toFixed(3)} s · PWM 左 ${fw.left.toFixed(3)} / 右 ${fw.right.toFixed(3)} · 超声触发 ${fw.sonar_triggers}`:'点击开始加载固件';
-  $('uart-output').textContent=(uartFormat.value==='hex'?fw.uart_hex:fw.uart_text)||'';
-  $('target').textContent=(data.target_side==='left'?'左侧':'右侧')+' · '+colors[data.color];
-  $('grasp').textContent=data.carrying?'夹持中':data.grasped?'已完成':'等待';
+  trace(data.panel_session?data.panel_session+':'+data.trace_epoch:data.trace_epoch,data.trace);
+  if(data.image)previewFrame=data.image;
+  if(!path.length||Math.hypot(data.pose[0]-path.at(-1)[0],data.pose[1]-path.at(-1)[1])>.006)path.push(data.pose);
+  if(path.length>2500)path.shift();
+  schedulePaint();
+}
+function render(data){
+  setText($('step-badge'),(config.step_ms??32)+' ms / 周期'+(data.running&&Number.isFinite(data.rate)?' · '+data.rate.toFixed(2)+'×':''));
+  if(socket.readyState===1)connectionStatus(data.running?'运行中':'已连接 · 待运行');
+  setText($('timer'),`${String(Math.floor(data.elapsed/60)).padStart(2,'0')}:${(data.elapsed%60).toFixed(1).padStart(4,'0')}`);
+  setText($('message'),data.message);
+  if(data.mode!==paintedMode){
+    paintedMode=data.mode;
+    $('mode').value=data.mode;
+    setText($('mode-help'),help[data.mode]);
+    setText($('reload'),data.mode==='firmware'?'重载固件与视觉':'重载算法');
+    $('firmware-card').hidden=data.mode!=='firmware';
+  }
+  if(data.mode==='firmware'){
+    const fw=data.firmware||{};
+    setText($('firmware-status'),fw.pc?`PC ${fw.pc} · MCU ${fw.virtual_s.toFixed(3)} s · PWM 左 ${fw.left.toFixed(3)} / 右 ${fw.right.toFixed(3)} · 超声触发 ${fw.sonar_triggers}`:'点击开始加载固件');
+    setText($('uart-output'),(uartFormat.value==='hex'?fw.uart_hex:fw.uart_text)||'');
+  }
+  setText($('target'),(data.target_side==='left'?'左侧':'右侧')+' · '+colors[data.color]);
+  setText($('grasp'),data.carrying?'夹持中':data.grasped?'已完成':'等待');
   const grip=data.claw;
   if(grip){
     const details=[`接触 ${grip.touching} / ${claw.contact_links?.length??0}`,grip.airborne?`离地 ${grip.clearance_mm.toFixed(1)} mm`:'物块未离地'];
-    $('claw-status').textContent=claw.kind==='none'?'当前装配体未绑定夹爪':details.join(' · ');
+    setText($('claw-status'),claw.kind==='none'?'当前装配体未绑定夹爪':details.join(' · '));
   }
-  $('placed').textContent=data.placed?(data.placed.correct?'正确目标圈':'其他放置圈')+` / ${data.placed.offset_mm} mm`:'尚未进圈';
-  $('parking').textContent=data.aligned?'已摆正并停稳':data.parked?'已到达停稳':'等待';
-  $('sonars').replaceChildren(...Object.entries(data.sensors.sonar).map(([name,value])=>{const d=document.createElement('div'),label=document.createElement('span'),v=document.createElement('strong');label.textContent=deviceNames[name]||name;v.textContent=(value*100).toFixed(1)+' cm';d.append(label,v);return d;}));
-  $('ir').replaceChildren(...data.sensors.ir.map(value=>{const d=document.createElement('div');d.style.background=`rgb(${Math.round(value*235)},${Math.round(value*235)},${Math.round(value*235)})`;d.style.color=value>.5?'#263b45':'#fff';d.textContent=value.toFixed(2);return d;}));
-  for(const name of ['left','right'])$('wheel-'+name).textContent=(name==='left'?'左轮 ':'右轮 ')+data.sensors.speed[name].toFixed(3)+' m/s';
-  $('collision').textContent=data.collision?'超声波区域有碰撞记录':'区域内无碰撞记录';
+  setText($('placed'),data.placed?(data.placed.correct?'正确目标圈':'其他放置圈')+` / ${data.placed.offset_mm} mm`:'尚未进圈');
+  setText($('parking'),data.aligned?'已摆正并停稳':data.parked?'已到达停稳':'等待');
+  for(const [name,value] of Object.entries(data.sensors.sonar)){
+    if(!sonarCells.has(name)){
+      const row=document.createElement('div'),label=document.createElement('span'),reading=document.createElement('strong');
+      label.textContent=deviceNames[name]||name;row.append(label,reading);$('sonars').append(row);
+      sonarCells.set(name,reading);
+    }
+    setText(sonarCells.get(name),(value*100).toFixed(1)+' cm');
+  }
+  for(const [i,value] of data.sensors.ir.entries()){
+    if(!irCells[i]){
+      const node=document.createElement('div');
+      $('ir').append(node);irCells.push({node});
+    }
+    const cell=irCells[i],shade=Math.round(value*235);
+    if(cell.shade!==shade){cell.shade=shade;cell.node.style.backgroundColor=`rgb(${shade},${shade},${shade})`;}
+    const color=value>.5?'#263b45':'#fff';
+    if(cell.color!==color){cell.color=color;cell.node.style.color=color;}
+    setText(cell.node,value.toFixed(2));
+  }
+  for(const name of ['left','right'])setText($('wheel-'+name),(name==='left'?'左轮 ':'右轮 ')+data.sensors.speed[name].toFixed(3)+' m/s');
+  setText($('collision'),data.collision?'超声波区域有碰撞记录':'区域内无碰撞记录');
   $('collision').classList.toggle('warn',data.collision);
   for(const [name,value] of Object.entries(data.sensors.joints||{})){
     const field=$('joint-value-'+name);
-    if(field)field.textContent=' 实测 '+value.toFixed(3);
+    if(field)setText(field,' 实测 '+value.toFixed(3));
   }
-  $('events').replaceChildren(...data.events.map(text=>{const li=document.createElement('li');li.textContent=text;return li;}));
-  if(data.image){$('camera').src='data:image/jpeg;base64,'+data.image;$('camera').style.display='block';$('camera-empty').style.display='none';}
-  if(!path.length||Math.hypot(data.pose[0]-path.at(-1)[0],data.pose[1]-path.at(-1)[1])>.006)path.push(data.pose);
-  if(path.length>2500)path.shift();draw();
+  const nextKey=JSON.stringify(data.events);
+  if(eventKey!==nextKey){
+    eventKey=nextKey;
+    $('events').replaceChildren(...data.events.map(text=>{const li=document.createElement('li');li.textContent=text;return li;}));
+  }
+  if(cameraVisible&&previewFrame&&previewFrame!==appliedPreview){
+    if(!appliedPreview){camera.style.display='block';$('camera-empty').hidden=true;}
+    appliedPreview=previewFrame;
+    camera.src='data:image/jpeg;base64,'+previewFrame;
+  }
+  const moved=(a,b)=>Boolean(a)!==Boolean(b)||(a&&b&&Math.hypot(a[0]-b[0],a[1]-b[1])>.001);
+  if(mapDirty||moved(data.pose,paintedPose)||moved(data.block_position,paintedBlock)||
+     Math.abs(data.pose[2]-paintedPose[2])>.01||paintedPathEnd!==path.at(-1)||data.color!==paintedColor)draw();
 }
 function draw(){
-  const canvas=$('map'),ctx=canvas.getContext('2d'),size=canvas.width;
-  ctx.clearRect(0,0,size,size);ctx.fillStyle='#fff';ctx.fillRect(0,0,size,size);
-  if(image.complete)ctx.drawImage(image,0,0,size,size);
-  if(!config)return;
+  const ctx=mapContext,size=mapCanvas.width;
+  ctx.clearRect(0,0,size,size);
+  mapDirty=false;
+  paintedPose=state?.pose;paintedBlock=state?.block_position;paintedColor=state?.color;paintedPathEnd=path.at(-1);
   const p=point=>[(point[0]/config.floor_size+.5)*size,(.5-point[1]/config.floor_size)*size];
   ctx.strokeStyle='#667b91';ctx.lineWidth=5;
   for(const [x0,y0,x1,y1] of config.walls){ctx.beginPath();ctx.moveTo(...p([x0,y0]));ctx.lineTo(...p([x1,y1]));ctx.stroke();}
@@ -145,9 +211,9 @@ function draw(){
     ctx.fillStyle=color;ctx.beginPath();ctx.arc(...p(state.block_position),5,0,Math.PI*2);ctx.fill();
   }
 }
-image.onload=draw;
+draw();
 for(const id of ['start','pause','reload','snapshot','channel'])$(id).onclick=()=>send(id);
-$('reset').onclick=()=>{path=[];send('reset',{group:Number($('group').value),color:$('color').value,stage:'full'});};
+$('reset').onclick=()=>{path=[];mapDirty=true;send('reset',{group:Number($('group').value),color:$('color').value,stage:'full'});};
 $('mode').onchange=()=>{send('mode',{value:$('mode').value});$('mode-help').textContent=help[$('mode').value];};
 for(const button of document.querySelectorAll('[data-drive]')){
   button.onpointerdown=event=>{button.setPointerCapture(event.pointerId);send('drive',{value:button.dataset.drive.split(',').map(Number)});};

@@ -27,11 +27,12 @@ function compact(value,digits){
   return value.toFixed(digits).replace(/(\.\d*?[1-9])0+$/,'$1').replace(/\.0+$/,'');
 }
 
-function plot(item,rows,start,end){
-  const {canvas,legend,key}=item,spec=specs[key],ctx=canvas.getContext('2d');
-  const width=canvas.clientWidth,height=canvas.clientHeight;
+const setText=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
+
+function plot(item,rows,start,end,width,height){
+  const {canvas,legend,key,labels}=item,spec=specs[key],ctx=canvas.getContext('2d');
   if(!width||!height)return;
-  const dpr=window.devicePixelRatio||1;
+  const dpr=Math.min(2,window.devicePixelRatio||1);
   if(canvas.width!==Math.round(width*dpr)||canvas.height!==Math.round(height*dpr)){
     canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);
   }
@@ -69,10 +70,10 @@ function plot(item,rows,start,end){
   if(!count){
     ctx.textAlign='center';
     ctx.fillText(rows.length?(key==='pwm'?'当前时段无固件 PWM':'当前时段无信号'):'等待采样',(left+right)/2,(top+bottom)/2-4);
-    legend.replaceChildren();
+    if(labels.length){legend.replaceChildren();labels.length=0;}
     return;
   }
-  const selected=values.at(-1), label=[];
+  const selected=values.at(-1);
   for(let i=0;i<count;i++){
     const color=colors[i%colors.length];
     ctx.strokeStyle=color;
@@ -93,19 +94,24 @@ function plot(item,rows,start,end){
     }
     ctx.stroke();
     ctx.setLineDash([]);
-    const node=document.createElement('span'),swatch=document.createElement('i');
-    swatch.style.background=color;
     const name=spec.names?.[i]??(key==='ir'?'IR'+i:distances[keys[i]]||keys[i]);
     const value=Number.isFinite(selected[i])?selected[i].toFixed(spec.digits):'—';
-    node.append(swatch,name+' '+value);
-    label.push(node);
+    if(!labels[i]){
+      const node=document.createElement('span'),swatch=document.createElement('i'),reading=document.createTextNode('');
+      swatch.style.background=color;
+      node.append(swatch,reading);
+      legend.append(node);
+      labels.push({node,reading});
+    }
+    const label=name+' '+value;
+    if(labels[i].reading.data!==label)labels[i].reading.data=label;
     if(Number.isFinite(selected[i])){
       ctx.fillStyle=color;
       ctx.beginPath();ctx.arc(x(rows.at(-1).t),y(selected[i]),2,0,Math.PI*2);ctx.fill();
     }
   }
   ctx.lineWidth=1;
-  legend.replaceChildren(...label);
+  while(labels.length>count)labels.pop().node.remove();
 }
 
 function uartLines(rows){
@@ -124,8 +130,9 @@ function uartLines(rows){
 
 export function initTrace(stepMs){
   const $=id=>document.getElementById('trace-'+id);
+  const plotArea=$('plots'),uartDetails=$('uart').parentElement;
   let epoch, live=[], capture, replay, index=0, recording=false, frame=0, plots=[];
-  let status='尚未录制';
+  let status='尚未录制', plotsVisible=false, nextPlotAt=0, nextUartAt=0;
   const createPlots=()=>{
     const group=$('group').value;
     plots=(group==='drive'?['pwm','speed','encoder']:['ir','sonar']).map(key=>{
@@ -137,26 +144,40 @@ export function initTrace(stepMs){
       canvas.setAttribute('aria-label',specs[key].title+'随仿真时间变化');
       legend.className='trace-legend';
       root.append(title,canvas,legend);
-      return {root,canvas,legend,key};
+      return {root,canvas,legend,key,labels:[]};
     });
     $('plots').replaceChildren(...plots.map(p=>p.root));
   };
-  const draw=()=>{
+  const draw=(force=false)=>{
     const all=replay?replay.samples:live;
     const sampleIndex=replay?index:all.length-1;
     const at=all[sampleIndex];
     const end=at?.t??0;
     const start=at?Math.max(all[0].t,end-windowSeconds):0;
-    const rows=at?all.slice(bound(all,start),sampleIndex+1):[];
-    for(const graph of plots)plot(graph,rows,start,Math.max(end,start+.5));
-    $('source').textContent=replay?'回放 · '+replay.step_ms+' ms':'实时 · '+stepMs+' ms';
-    $('status').textContent=recording?'录制中 · '+capture.samples.length+' 点':status;
-    $('record').textContent=recording?'停止录制':'开始录制';
-    $('record').setAttribute('aria-pressed',String(recording));
+    const now=performance.now();
+    const redrawPlots=plotsVisible&&(force||now>=nextPlotAt);
+    const redrawUart=uartDetails.open&&(force||now>=nextUartAt);
+    if(redrawPlots||redrawUart){
+      const rows=at?all.slice(bound(all,start),sampleIndex+1):[];
+      if(redrawPlots){
+        // Read every canvas size before changing legends or canvas attributes.
+        const sizes=plots.map(({canvas})=>[canvas.clientWidth,canvas.clientHeight]);
+        plots.forEach((graph,i)=>plot(graph,rows,start,Math.max(end,start+.5),...sizes[i]));
+        nextPlotAt=now+100;
+      }
+      if(redrawUart){
+        setText($('uart'),uartLines(rows)||'当前时间窗无收发');
+        nextUartAt=now+100;
+      }
+    }
+    setText($('source'),replay?'回放 · '+replay.step_ms+' ms':'实时 · '+stepMs+' ms');
+    setText($('status'),recording?'录制中 · '+capture.samples.length+' 点':status);
+    setText($('record'),recording?'停止录制':'开始录制');
+    if($('record').getAttribute('aria-pressed')!==String(recording))$('record').setAttribute('aria-pressed',String(recording));
     $('record').disabled=Boolean(replay);
     $('export').disabled=!(replay||capture)?.samples.length;
     $('transport').hidden=!replay;
-    $('play').textContent=frame?'暂停':'播放';
+    setText($('play'),frame?'暂停':'播放');
     if(replay){
       $('position').max=replay.samples.length-1;
       $('position').value=index;
@@ -165,8 +186,7 @@ export function initTrace(stepMs){
     const pose=at?.pose;
     const position=Array.isArray(pose)&&pose.length>=3&&pose.every(Number.isFinite)
       ?' · '+pose[0].toFixed(3)+', '+pose[1].toFixed(3)+' m · '+(pose[2]*180/Math.PI).toFixed(1)+'°':'';
-    $('time').textContent=at?end.toFixed(3)+' s · '+(modes[at.mode]||'—')+' · '+(at.running?'运行':'暂停')+position:'等待采样';
-    $('uart').textContent=uartLines(rows)||'当前时间窗无收发';
+    setText($('time'),at?end.toFixed(3)+' s · '+(modes[at.mode]||'—')+' · '+(at.running?'运行':'暂停')+position:'等待采样');
   };
   const stopRecording=(reason='已录制')=>{
     if(!recording)return;
@@ -183,7 +203,7 @@ export function initTrace(stepMs){
       capture={format:'moonlight-trace',version:1,step_ms:stepMs,samples:[]};
       recording=true;
     }
-    draw();
+    draw(true);
   };
   $('export').onclick=()=>{
     const data=replay||capture;
@@ -214,19 +234,19 @@ export function initTrace(stepMs){
     }catch(error){
       status='无法打开录制：'+error.message;
     }
-    draw();
+    draw(true);
   };
   $('position').oninput=()=>{
-    stopPlayback();index=Number($('position').value);draw();
+    stopPlayback();index=Number($('position').value);draw(true);
   };
   $('play').onclick=()=>{
-    if(frame){stopPlayback();draw();return;}
+    if(frame){stopPlayback();draw(true);return;}
     if(index===replay.samples.length-1)index=0;
     const first=replay.samples[index].t, begun=performance.now();
     const advance=()=>{
       index=bound(replay.samples,first+(performance.now()-begun)/1000,true)-1;
       frame=index<replay.samples.length-1?setTimeout(advance,50):0;
-      draw();
+      draw(!frame);
     };
     advance();
   };
@@ -234,10 +254,15 @@ export function initTrace(stepMs){
     stopPlayback();
     replay=null;
     status=capture?.samples.length?'已录制 · '+capture.samples.length+' 点':'尚未录制';
-    draw();
+    draw(true);
   };
-  $('group').onchange=()=>{createPlots();draw();};
-  window.addEventListener('resize',draw);
+  $('group').onchange=()=>{createPlots();draw(true);};
+  window.addEventListener('resize',()=>draw(true));
+  uartDetails.addEventListener('toggle',()=>{if(uartDetails.open)draw(true);});
+  new IntersectionObserver(([entry])=>{
+    plotsVisible=entry.isIntersecting;
+    if(plotsVisible)draw(true);
+  }).observe(plotArea);
   createPlots();draw();
   return (nextEpoch,batch)=>{
     if(!batch?.length)return;

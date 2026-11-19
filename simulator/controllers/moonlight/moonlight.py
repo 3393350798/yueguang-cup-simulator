@@ -8,6 +8,7 @@ import os
 import sys
 import time
 import traceback
+from uuid import uuid4
 from runtime_log import CHOICES, RuntimeLog, choice, project_version
 
 ROOT=Path(__file__).resolve().parents[2]
@@ -35,7 +36,9 @@ diagnostics.phase='scene_config'
 CONFIG=json.loads((ROOT/'scene.json').read_text(encoding='utf-8'))
 STEP=int(CONFIG.get('step_ms',32))
 DT=STEP/1000
-PREVIEW_TICKS=192//STEP
+PANEL_TICKS=64//STEP
+CAMERA_PREVIEW_TICKS=192//STEP
+FIRMWARE_VISION_TICKS=192//STEP
 R=CONFIG['wheel_radius']
 HW=CONFIG['robot']
 Z=CONFIG['robot_origin_z']
@@ -122,7 +125,6 @@ algorithm=None
 firmware=None
 firmware_status={}
 effects=Imperfections(HW.get('imperfections',{}))
-last_image=None
 tick=0
 last_collision_time=-10
 keyboard_driving=False
@@ -131,6 +133,8 @@ trace_start=sim.getTime()
 trace=[]
 last_view_wall=time.monotonic()
 active_steps=0
+panel_rate=0.0
+panel_session=uuid4().hex[:8]
 vision_link=None
 
 def update_log_context():
@@ -444,16 +448,21 @@ while sim.step(STEP)!=-1:
     current_encoder=[d.getValue()*sign for d,sign in zip(encoders,WHEEL_SIGNS)]
     wheel_speed=[(a-b)*R/DT for a,b in zip(current_encoder,last_encoder)]
     last_encoder=current_encoder
-    preview=tick%PREVIEW_TICKS==0
+    firmware_vision=state['running'] and state['mode']=='firmware' and tick%FIRMWARE_VISION_TICKS==0
+    panel_preview=tick%CAMERA_PREVIEW_TICKS==0
+    panel_image=None
     image=None
     link_frame=vision_link is not None and tick%(64//STEP)==0
-    if preview or link_frame or (state['running'] and state['mode']=='member') or (capture and tick==960//STEP):
+    if panel_preview or firmware_vision or link_frame or (state['running'] and state['mode']=='member') or (capture and tick==960//STEP):
         pixels=camera.getImage()
         if pixels:
             image=np.frombuffer(pixels,np.uint8).reshape((IMAGE_HEIGHT,IMAGE_WIDTH,4))[:,:,:3].copy()
-    if preview and image is not None:
-        ok,jpg=cv2.imencode('.jpg',image,[cv2.IMWRITE_JPEG_QUALITY,70])
-        last_image=base64.b64encode(jpg).decode() if ok else None
+    if panel_preview and image is not None:
+        longest=max(IMAGE_WIDTH,IMAGE_HEIGHT)
+        preview_image=image if longest<=480 else cv2.resize(image,
+            (max(1,round(IMAGE_WIDTH*480/longest)),max(1,round(IMAGE_HEIGHT*480/longest))),interpolation=cv2.INTER_AREA)
+        ok,jpg=cv2.imencode('.jpg',preview_image,[cv2.IMWRITE_JPEG_QUALITY,70])
+        if ok:panel_image=base64.b64encode(jpg).decode('ascii')
     if link_frame and image is not None:
         ok,png=cv2.imencode('.png',image)
         if ok:
@@ -478,7 +487,7 @@ while sim.step(STEP)!=-1:
         try:
             if state['mode']=='manual':command=dict(zip(('left','right'),manual))
             elif state['mode']=='firmware':
-                if preview and image is not None:
+                if firmware_vision and image is not None:
                     diagnostics.phase='member_vision'
                     sensors['vision']=algorithm.vision(image)
                     queue_uart(sensors['vision'].get('uart_tx',''),cycle_start)
@@ -546,20 +555,23 @@ while sim.step(STEP)!=-1:
         trial.update(p,grasp,wall_contact,firmware_status.get('sonar_triggers',0))
     if state['running'] and round_limit is not None and state['elapsed']+1e-9>=round_limit:
         finish_round('time')
+    block_pose=block.getPosition()
     trace.append(dict(t=round(sim.getTime()-trace_start,6), mode=state['mode'], running=state['running'],
                       pwm=pwm, speed=wheel_speed, encoder=current_encoder, ir=sensors['ir'],
                       sonar=sensors['sonar'], uart_in=uart_in, uart_out=uart_out, pose=p,
-                      grip=grasp, block_position=block.getPosition()))
-    if preview:
+                      grip=grasp, block_position=block_pose))
+    if tick%PANEL_TICKS==0:
         now=time.monotonic()
-        rate=active_steps*DT/max(now-last_view_wall,.001)
-        last_view_wall=now
-        active_steps=0
-        payload=dict(state,sensors=sensors,pose=p,image=last_image,firmware=firmware_status,
-                     trace=trace,trace_epoch=trace_epoch,rate=rate,claw=grasp,block_position=block.getPosition(),
+        if panel_preview:
+            panel_rate=active_steps*DT/max(now-last_view_wall,.001)
+            last_view_wall=now
+            active_steps=0
+        payload=dict(state,sensors=sensors,pose=p,firmware=firmware_status,panel_session=panel_session,panel_tick=tick,
+                     trace=trace,trace_epoch=trace_epoch,rate=panel_rate,claw=grasp,block_position=block_pose,
                      trial=dict(trial.report(state,p),id=round_id),round_result=round_result,
                      resetting=sim.getTime()<ready_at,round_error=round_error,
                      target_side='left' if state['group']%2==0 else 'right')
+        if panel_image is not None:payload['image']=panel_image
         sim.wwiSendText(json.dumps(payload,ensure_ascii=True,separators=(',',':')))
         trace.clear()
     if capture and tick==960//STEP:
