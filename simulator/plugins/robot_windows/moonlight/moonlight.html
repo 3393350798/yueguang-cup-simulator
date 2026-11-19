@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>月光杯 · 仿真练习台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="moonlight.css?v=0.6.5"><link rel="stylesheet" href="trace.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>月光杯 · 仿真练习台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="moonlight.css?v=incident"><link rel="stylesheet" href="trace.css"></head>
 <body>
 <header><div><span class="eyebrow">MOONLIGHT / ROBOTICS LAB</span><h1>月光杯<span>仿真练习台</span></h1></div><span id="connection" class="badge" role="status">连接场景中</span></header>
 <main>
@@ -17,6 +17,12 @@
     <div class="settings"><label>组号 <input id="group" type="number" min="1" value="2"></label><label>物块 <select id="color"><option value="red">红色</option><option value="yellow">黄色</option><option value="blue">蓝色</option></select></label><span>修改后点击「重置场景」</span></div>
     <div class="task-grid"><div><span>指定位置</span><strong id="target">左侧 · 红色</strong></div><div><span>抓取</span><strong id="grasp">等待</strong></div><div><span>放置结果</span><strong id="placed">等待</strong></div><div><span>终点停车</span><strong id="parking">等待</strong></div></div>
     <details><summary>运行事件</summary><ol id="events"></ol></details>
+    <details class="incident-panel"><summary>失败回放 <span id="incident-count" class="mini"></span></summary>
+      <p>面板连接时，自动保留最近 4 段碰撞、意外掉块和程序异常。点击片段可定位到故障。</p>
+      <ol id="incident-items"></ol><p id="incident-status" role="status"></p>
+      <button id="incident-import" class="small">打开失败片段</button>
+      <input id="incident-file" type="file" accept=".json,application/json" hidden>
+    </details>
     <section class="trial-panel" aria-labelledby="trial-heading">
       <div class="section-head"><h2 id="trial-heading">分赛段练习</h2><span id="trial-current" class="mini">全程</span></div>
       <div class="settings">
@@ -39,7 +45,7 @@
       <div class="section-head"><h2 id="trace-heading">调试波形</h2><span class="mini" id="trace-source">实时</span></div>
       <div class="trace-tools">
         <label for="trace-group">信号组</label>
-        <select id="trace-group"><option value="drive">驱动 · PWM / 轮速 / 编码器</option><option value="environment">环境 · 红外 / 超声波</option></select>
+        <select id="trace-group"><option value="drive">驱动 · PWM / 轮速 / 编码器</option><option value="environment">环境 · 红外 / 超声波</option><option value="incident" hidden>失败回放 · PWM / 超声波</option></select>
         <button id="trace-record" aria-pressed="false">开始录制</button>
         <button id="trace-export" disabled>导出 JSON</button>
         <button id="trace-import">打开录制</button>
@@ -50,6 +56,10 @@
         <button id="trace-play">播放</button>
         <input id="trace-position" type="range" min="0" max="0" value="0" aria-label="回放进度">
         <button id="trace-live">返回实时</button>
+      </div>
+      <div id="incident-view" class="incident-view" hidden>
+        <div class="map-wrap"><canvas id="incident-map" width="480" height="480" aria-label="故障时的车体和物块位置"></canvas></div>
+        <div><p id="incident-position"></p><p id="incident-grip"></p><p>点击事件跳到对应位置：</p><div id="trace-marks"></div></div>
       </div>
       <div id="trace-plots"></div>
       <div class="trace-state" id="trace-time">等待采样</div>

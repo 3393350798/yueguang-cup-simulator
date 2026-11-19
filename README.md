@@ -7,13 +7,14 @@
 ## 开始使用
 
 1. 安装 [Webots R2025a](https://github.com/cyberbotics/webots/releases/tag/R2025a) 和 [Python 3.11～3.13](https://www.python.org/downloads/)。安装 Python 时选择加入 PATH。
-2. [下载 v0.6.5 ZIP](https://github.com/3393350798/yueguang-cup-simulator/releases/download/v0.6.5/yueguang-cup-simulator-v0.6.5.zip) 并解压。在 Windows 下，双击 `setup.bat`，等待 Python 环境与依赖安装完毕，再关闭窗口。
+2. [下载 v0.7.0 ZIP](https://github.com/3393350798/yueguang-cup-simulator/releases/download/v0.7.0/yueguang-cup-simulator-v0.7.0.zip) 并解压。在 Windows 下，双击 `setup.bat`，等待 Python 环境与依赖安装完毕，再关闭窗口。
 3. 双击 `start.bat`，等待 Webots 加载赛场，脚本会自动打开中文浏览器面板。
 4. 可先使用「手动探索」查看场景和传感器；编写程序后选择「会员算法」，点击「重载算法」和「开始运行」。
 
 从旧版本升级时，先重新运行 `setup.bat` 安装模型导入依赖。需要导入 STEP 时，再双击 `scripts/setup-cad.bat` 安装转换组件。需要执行 STM32 固件时，运行 `scripts/setup-firmware.bat` 安装 Renode 后端，再通过 `scripts/import-hardware.bat` 的固件页导入程序并绑定引脚。
 
 启动遇到问题时，双击 `scripts/check-setup.bat`，按队伍接入方式运行[启动自检](docs/启动自检.md)。
+实体 STM32 串口联调遇到问题时，运行 `scripts/check-serial.bat`，见[实车串口自检](docs/实车串口自检.md)。
 需要发给负责人排查时，重现一次问题，再双击 `scripts/export-diagnostics.bat`。把 `output/` 下生成的 ZIP 和你遇到的现象一起发出。即使面板打不开也可导出，见[故障诊断](docs/故障诊断.md)。
 
 启动前关闭旧的同项目 Webots 窗口。Webots 和浏览器需要同时保持打开。项目支持中文目录，Windows 启动脚本会从安装信息或 `WEBOTS_HOME` 查找 Webots。自定义安装位置可在项目目录执行：
@@ -41,6 +42,8 @@ sh start.sh
 - **嘉立创EDA资料导入**：导入标准版或专业版导出的 PADS 9.5 网表，查看器件和网络，在 STM32F103C8T6 封装图中选脚并连接设备；板卡 STEP/STL 可放到车上。
 - **STM32 固件执行**：Renode 执行自己的 ELF/AXF/HEX/BIN，支持 PWM、AB 编码器、红外 ADC1 扫描及 DMA、超声波回波、USART 和夹爪开合、升降信号。通过 HAL 和标准外设库样件验证的功能、时钟配置和范围见 [固件执行](docs/固件执行.md)。
 - **调试与联调**：录制、导出和回放 PWM、轮速、编码器、红外、超声波、串口；向本机电脑程序提供无损相机帧和双向二进制串口。可调电机、传感器、灯光和通讯扰动，见 [调试与联调](docs/调试与联调.md)。
+- **失败回放**：在练习面板回看碰撞、意外掉块和程序错误前后的位姿、夹爪状态与波形，见 [失败回放](docs/失败回放.md)。
+- **夹爪测试台**：用同一组物块偏移、角度和摩擦对照夹爪设计，见 [夹爪测试台](docs/夹爪测试台.md)。
 - **队伍项目**：在 `scripts/team-project.bat` 将当前小车、接线、固件与自编程序保存为本地 ZIP，也可从 ZIP 创建独立练习目录，见 [队伍项目](docs/队伍项目.md)。
 - **手动探索**：按住面板方向按钮驾驶，松开停车；也可在 Webots 画面中使用 W/A/S/D 驾驶、E 切换夹爪开合、Q 切换升降、空格停车。
 - **会员算法入口**：编辑 `simulator/controllers/moonlight/member_algorithm.py` 中的 `vision()` 和 `step()`；保存后点「重载算法」。模板默认停车。
@@ -98,7 +101,7 @@ sh start.sh
 | `setup.bat`、`start.bat` | Windows 安装依赖与启动仿真；Linux/macOS 使用 `start.sh` |
 | `scripts/` | 配置小车、导入硬件、安装 STEP 和固件后端的入口 |
 | `docs/` | 接口、硬件和固件说明及截图 |
-| `requirements/` | Python 基础依赖 `core.txt` 和可选 STEP 依赖 `cad.txt` |
+| `requirements/` | Python 基础依赖 `core.txt`，可选 STEP 依赖 `cad.txt` 和实车串口依赖 `serial.txt` |
 | `simulator/` | Webots 工程：`controllers/` 控制器、`worlds/` 世界、`plugins/` 面板、`tools/` 桥接与生成工具、`hardware/` 格式示例 |
 
 小车、板卡、固件配置分别为 `simulator/robot.json`、`simulator/board.json`、`simulator/firmware.json`；`simulator/scene.json` 是生成的场景参数。会员从 `simulator/controllers/moonlight/member_algorithm.py` 编写自己的程序。

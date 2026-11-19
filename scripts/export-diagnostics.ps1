@@ -15,9 +15,20 @@ $sessionPattern = '\d{8}T\d{6}Z-[0-9a-f]{8,32}'
 $events = @{
     launch = @('launch_started','scene_generated','webots_started','panel_ready','launch_failed','browser_open_failed')
     setup = @('setup_started','python_found','environment_ready','setup_finished','setup_failed')
+    serial = @('serial_started','serial_ports','serial_opened','serial_result')
     runtime = @('startup_begin','config_ready','scene_loaded','controller_ready','mode_changed','algorithm_loaded',
         'vision_link_ready','run_started','run_paused','round_reset','round_finished','firmware_start_requested',
         'firmware_started','firmware_closed','gripper_holding','gripper_released','wall_contact','error','shutdown','log_limit')
+}
+$serialCodes = @(
+    'serial_dependency_missing','serial_list_failed','serial_no_ports','serial_list_only','serial_cancelled',
+    'serial_port_unavailable','serial_port_denied_or_busy','serial_open_failed','serial_io_failed','serial_write_failed',
+    'serial_listening_silent','serial_bytes_received','serial_reply_timeout','serial_reply_mismatch','serial_reply_match',
+    'serial_rx_limit'
+)
+$serialRanges = @{
+    port_count=@(0,4096); baudrate=@(300,3000000); data_bits=@(5,8); duration_ms=@(100,30000)
+    stop_bits=@(1,2); tx_bytes=@(0,2000000); rx_bytes=@(0,2000000); first_rx_ms=@(0,30000)
 }
 $allowed = @{
     code = @('missing_python','missing_webots','port_conflict','scene_generation_failed','webots_start_failed',
@@ -90,6 +101,19 @@ function Select-SafeRow($row, [string]$source) {
     $when = if ($source -eq 'runtime') { $row.timestamp } else { $row.at }
     if ($when -isnot [string] -or $when -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?(?:Z|\+00:00)$') { return }
     $safe = [ordered]@{at=$when; event=$row.event}
+    if ($source -eq 'serial') {
+        if ($row.code -is [string] -and $serialCodes -ccontains $row.code) { $safe.code=$row.code }
+        if ($row.parity -is [string] -and @('N','E','O') -ccontains $row.parity) { $safe.parity=$row.parity }
+        foreach ($key in $serialRanges.Keys) {
+            $val=$row.$key
+            $min,$max=$serialRanges[$key]
+            if ((Is-Int $val) -and $val -ge $min -and $val -le $max) { $safe[$key]=$val }
+        }
+        foreach ($key in @('probe_enabled','expected_reply')) {
+            if ($row.$key -is [bool]) { $safe[$key]=$row.$key }
+        }
+        return $safe
+    }
     foreach ($key in $allowed.Keys) {
         $val = $row.$key
         if ($val -is [string] -and $allowed[$key] -ccontains $val) { $safe[$key]=$val }
@@ -131,7 +155,7 @@ try {
             Where-Object { -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } |
             Sort-Object LastWriteTimeUtc -Descending)
     }
-    foreach ($source in @('setup','launch','runtime')) {
+    foreach ($source in @('setup','launch','runtime','serial')) {
         $pattern = if ($source -eq 'runtime') {
             '^runtime-(?<id>' + $sessionPattern + ')(?:-[0-9a-f]{4,32})?\.jsonl$'
         } else {
@@ -202,17 +226,17 @@ try {
             Write-ZipEntry $archive 'README.txt' @'
 Moonlight Cup diagnostics
 Read diagnostics.json. Events from the same run have the same session ID.
-Recent setup, launch and controller events are included when present. Error
+Recent setup, launch, controller and serial-test events are included when present. Error
 hints are based on recognized messages, and may need manual confirmation.
-No raw console logs, source code, firmware, project settings, camera images
-or UART payloads are included. Nothing was uploaded.
+No raw console logs, source code, firmware, project settings, COM identifiers,
+camera images, failure replays, or UART payloads are included. Nothing was uploaded.
 '@
         } finally { $archive.Dispose() }
     } finally { $zipFile.Dispose() }
     $finished=$true
     Write-Host 'Diagnostic ZIP created:'
     Write-Host $destination
-    if (-not $logSets.Count) { Write-Host 'No runtime or setup session was found; the ZIP contains system details and any recognized hints.' }
+    if (-not $logSets.Count) { Write-Host 'No diagnostic session was found; the ZIP contains system details and any recognized hints.' }
     if ($OpenFolder) {
         try { Start-Process explorer.exe -ArgumentList ('/select,"'+$destination+'"') } catch {}
     }

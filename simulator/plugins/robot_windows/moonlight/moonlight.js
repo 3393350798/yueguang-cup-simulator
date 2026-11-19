@@ -1,6 +1,6 @@
 const build=new URLSearchParams(location.search).get('v')||Date.now();
-const [{default:config},{initTrace},{initTrials}]=await Promise.all(
-  ['scene','trace','trials'].map(name=>import('./'+name+'.js?v='+encodeURIComponent(build)))
+const [{default:config},{initTrace},{initTrials},{initIncidents}]=await Promise.all(
+  ['scene','trace','trials','incidents'].map(name=>import('./'+name+'.js?v='+encodeURIComponent(build)))
 );
 const elements=new Map();
 const $=id=>{
@@ -12,7 +12,8 @@ const colors={red:'红色',yellow:'黄色',blue:'蓝色'};
 const hardware=config.robot;
 const deviceNames={front:'前距',left:'左距',right:'右距',rear:'后距'};
 $('step-badge').textContent=`${config.step_ms??32} ms / 周期`;
-const trace=initTrace(config.step_ms??32);
+const trace=initTrace(config.step_ms??32,showIncidentFrame);
+const incidents=initIncidents({stepMs:config.step_ms??32,field:config.field_revision,open:trace.openIncident});
 $('hardware-summary').textContent=`${hardware.name} · 底盘 ${hardware.body.length_mm} × ${hardware.body.width_mm} mm · 轮径 ${hardware.wheels.radius_mm*2} mm · 轮距 ${hardware.wheels.track_mm} mm · 红外 ${hardware.ir.positions_mm.length} 路 · 超声波 ${hardware.sonar.sensors.length} 路 · 摄像头 ${hardware.camera.width} × ${hardware.camera.height}`;
 const model=hardware.model||{kind:'parametric'};
 const claw=config.gripper||{kind:'none',jaws:[],lift:null};
@@ -54,11 +55,18 @@ let previewFrame, appliedPreview, cameraVisible=false, eventKey='';
 let panelSession, panelTick=-1;
 const robotName=new URLSearchParams(location.search).get('name')||'Moonlight';
 const mapCanvas=$('map'), mapContext=mapCanvas.getContext('2d');
+const incidentCanvas=$('incident-map'), incidentContext=incidentCanvas.getContext('2d');
+let incidentFrame, incidentVisible=false;
 const camera=$('camera');
 const irCells=[], sonarCells=new Map();
 const base=new URL('track.png',location.href);
 base.searchParams.set('v',build);
 mapCanvas.style.backgroundImage='url("'+base.href+'")';
+incidentCanvas.style.backgroundImage=mapCanvas.style.backgroundImage;
+new IntersectionObserver(([entry])=>{
+  incidentVisible=entry.isIntersecting;
+  if(incidentVisible&&incidentFrame)drawIncidentMap();
+}).observe(incidentCanvas);
 new IntersectionObserver(([entry])=>{
   cameraVisible=entry.isIntersecting;
   if(cameraVisible)schedulePaint();
@@ -93,7 +101,10 @@ function connect(){
       if(packet.message.startsWith('{'))receive(JSON.parse(packet.message));
     }
   };
-  socket.onclose=()=>connectionStatus(state?'场景已断开 · 刷新重连':'场景未连通 · 刷新重试',true);
+  socket.onclose=()=>{
+    incidents.disconnect();
+    connectionStatus(state?'场景已断开 · 刷新重连':'场景未连通 · 刷新重试',true);
+  };
 }
 function schedulePaint(){
   if(!paintFrame)paintFrame=requestAnimationFrame(()=>{
@@ -113,7 +124,9 @@ function receive(data){
   state=data;
   // Consume every batch even if several arrive before the next browser paint.
   observeTrial(data);
-  trace(data.panel_session?data.panel_session+':'+data.trace_epoch:data.trace_epoch,data.trace);
+  const epoch=data.panel_session?data.panel_session+':'+data.trace_epoch:data.trace_epoch;
+  trace.receive(epoch,data.trace);
+  incidents.receive(epoch,data.trace,{stage:data.trial?.stage??'full',color:data.color});
   if(data.image)previewFrame=data.image;
   if(!path.length||Math.hypot(data.pose[0]-path.at(-1)[0],data.pose[1]-path.at(-1)[1])>.006)path.push(data.pose);
   if(path.length>2500)path.shift();
@@ -186,17 +199,33 @@ function render(data){
      Math.abs(data.pose[2]-paintedPose[2])>.01||paintedPathEnd!==path.at(-1)||data.color!==paintedColor)draw();
 }
 function draw(){
-  const ctx=mapContext,size=mapCanvas.width;
-  ctx.clearRect(0,0,size,size);
   mapDirty=false;
   paintedPose=state?.pose;paintedBlock=state?.block_position;paintedColor=state?.color;paintedPathEnd=path.at(-1);
+  paintMap(mapContext,mapCanvas.width,state,path);
+}
+function showIncidentFrame(sample,clip){
+  const view=$('incident-view');
+  view.hidden=!sample;
+  incidentFrame=sample?{sample,color:clip.color}:null;
+  if(!sample)return;
+  const [x,y,angle]=sample.pose,block=sample.block_position,grip=sample.grip;
+  setText($('incident-position'),`车体 ${x.toFixed(3)}, ${y.toFixed(3)} m · ${(angle*180/Math.PI).toFixed(1)}°｜物块 ${block[0].toFixed(3)}, ${block[1].toFixed(3)} m`);
+  setText($('incident-grip'),`夹爪 ${grip.closing?'合拢':'张开'}／${grip.raising?'抬升':'下降'} · ${grip.holding?'夹持中':'未夹持'} · 离地 ${grip.clearance_mm?.toFixed(1)??'—'} mm`);
+  if(incidentVisible)drawIncidentMap();
+}
+function drawIncidentMap(){
+  const {sample,color}=incidentFrame;
+  paintMap(incidentContext,incidentCanvas.width,{pose:sample.pose,block_position:sample.block_position,color},[]);
+}
+function paintMap(ctx,size,snapshot,route){
+  ctx.clearRect(0,0,size,size);
   const p=point=>[(point[0]/config.floor_size+.5)*size,(.5-point[1]/config.floor_size)*size];
   ctx.strokeStyle='#667b91';ctx.lineWidth=5;
   for(const [x0,y0,x1,y1] of config.walls){ctx.beginPath();ctx.moveTo(...p([x0,y0]));ctx.lineTo(...p([x1,y1]));ctx.stroke();}
-  if(path.length){ctx.strokeStyle='#1caa91a0';ctx.lineWidth=2;ctx.beginPath();path.forEach((v,i)=>{const c=p(v);i?ctx.lineTo(...c):ctx.moveTo(...c);});ctx.stroke();}
-  if(state){
-    const c=p(state.pose),scale=size/config.floor_size/1000;
-    ctx.save();ctx.translate(...c);ctx.rotate(-state.pose[2]);ctx.scale(scale,scale);
+  if(route.length){ctx.strokeStyle='#1caa91a0';ctx.lineWidth=2;ctx.beginPath();route.forEach((v,i)=>{const c=p(v);i?ctx.lineTo(...c):ctx.moveTo(...c);});ctx.stroke();}
+  if(snapshot){
+    const c=p(snapshot.pose),scale=size/config.floor_size/1000;
+    ctx.save();ctx.translate(...c);ctx.rotate(-snapshot.pose[2]);ctx.scale(scale,scale);
     const b=hardware.body,w=hardware.wheels;
     ctx.fillStyle='#133b4d';ctx.fillRect(-b.length_mm/2,-b.width_mm/2,b.length_mm,b.width_mm);
     ctx.fillStyle='#465765';for(const y of [-w.track_mm/2,w.track_mm/2])ctx.fillRect(-w.radius_mm,y-w.width_mm/2,w.radius_mm*2,w.width_mm);
@@ -206,9 +235,9 @@ function draw(){
     ctx.fillStyle='#3bc2aa';for(const position of hardware.ir.positions_mm){ctx.beginPath();ctx.arc(position[0],-position[1],3,0,Math.PI*2);ctx.fill();}
     ctx.fillStyle='#278fc3';ctx.fillRect(hardware.camera.position_mm[0]-5,-hardware.camera.position_mm[1]-5,10,10);ctx.restore();
   }
-  if(state?.block_position){
-    const color={red:'#df263e',yellow:'#dac226',blue:'#2460ec'}[state.color];
-    ctx.fillStyle=color;ctx.beginPath();ctx.arc(...p(state.block_position),5,0,Math.PI*2);ctx.fill();
+  if(snapshot?.block_position){
+    const color={red:'#df263e',yellow:'#dac226',blue:'#2460ec'}[snapshot.color];
+    ctx.fillStyle=color;ctx.beginPath();ctx.arc(...p(snapshot.block_position),5,0,Math.PI*2);ctx.fill();
   }
 }
 draw();

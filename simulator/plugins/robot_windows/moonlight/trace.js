@@ -29,7 +29,7 @@ function compact(value,digits){
 
 const setText=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
 
-function plot(item,rows,start,end,width,height){
+function plot(item,rows,start,end,width,height,selection){
   const {canvas,legend,key,labels}=item,spec=specs[key],ctx=canvas.getContext('2d');
   if(!width||!height)return;
   const dpr=Math.min(2,window.devicePixelRatio||1);
@@ -67,13 +67,23 @@ function plot(item,rows,start,end,width,height){
     ctx.textAlign=tick===0?'left':tick===4?'right':'center';
     ctx.fillText(t.toFixed(2)+' s',xx,height-5);
   }
+  if(selection){
+    ctx.strokeStyle='#df9c36';ctx.setLineDash([3,3]);
+    for(const mark of selection.marks){
+      const xx=x(mark.t);
+      ctx.beginPath();ctx.moveTo(xx,top);ctx.lineTo(xx,bottom);ctx.stroke();
+    }
+    ctx.setLineDash([]);ctx.strokeStyle='#133b4d';
+    const xx=x(rows[selection.index].t);
+    ctx.beginPath();ctx.moveTo(xx,top);ctx.lineTo(xx,bottom);ctx.stroke();
+  }
   if(!count){
     ctx.textAlign='center';
     ctx.fillText(rows.length?(key==='pwm'?'当前时段无固件 PWM':'当前时段无信号'):'等待采样',(left+right)/2,(top+bottom)/2-4);
     if(labels.length){legend.replaceChildren();labels.length=0;}
     return;
   }
-  const selected=values.at(-1);
+  const selectedIndex=selection?.index??rows.length-1, selected=values[selectedIndex];
   for(let i=0;i<count;i++){
     const color=colors[i%colors.length];
     ctx.strokeStyle=color;
@@ -107,7 +117,7 @@ function plot(item,rows,start,end,width,height){
     if(labels[i].reading.data!==label)labels[i].reading.data=label;
     if(Number.isFinite(selected[i])){
       ctx.fillStyle=color;
-      ctx.beginPath();ctx.arc(x(rows.at(-1).t),y(selected[i]),2,0,Math.PI*2);ctx.fill();
+      ctx.beginPath();ctx.arc(x(rows[selectedIndex].t),y(selected[i]),2,0,Math.PI*2);ctx.fill();
     }
   }
   ctx.lineWidth=1;
@@ -128,14 +138,16 @@ function uartLines(rows){
   return lines.reverse().join('\n');
 }
 
-export function initTrace(stepMs){
+export function initTrace(stepMs,showIncidentFrame){
   const $=id=>document.getElementById('trace-'+id);
   const plotArea=$('plots'),uartDetails=$('uart').parentElement;
-  let epoch, live=[], capture, replay, index=0, recording=false, frame=0, plots=[];
+  let epoch, live=[], capture, replay, incident, index=0, recording=false, frame=0, plots=[];
+  let previousGroup='drive';
   let status='尚未录制', plotsVisible=false, nextPlotAt=0, nextUartAt=0;
   const createPlots=()=>{
     const group=$('group').value;
-    plots=(group==='drive'?['pwm','speed','encoder']:['ir','sonar']).map(key=>{
+    const keys=group==='drive'?['pwm','speed','encoder']:group==='incident'?['pwm','sonar']:['ir','sonar'];
+    plots=keys.map(key=>{
       const root=document.createElement('section'),title=document.createElement('h3');
       const canvas=document.createElement('canvas'),legend=document.createElement('div');
       root.className='trace-plot';
@@ -153,16 +165,18 @@ export function initTrace(stepMs){
     const sampleIndex=replay?index:all.length-1;
     const at=all[sampleIndex];
     const end=at?.t??0;
-    const start=at?Math.max(all[0].t,end-windowSeconds):0;
+    const start=at?(incident?all[0].t:Math.max(all[0].t,end-windowSeconds)):0;
     const now=performance.now();
     const redrawPlots=plotsVisible&&(force||now>=nextPlotAt);
     const redrawUart=uartDetails.open&&(force||now>=nextUartAt);
     if(redrawPlots||redrawUart){
-      const rows=at?all.slice(bound(all,start),sampleIndex+1):[];
+      const rows=at?(incident?all:all.slice(bound(all,start),sampleIndex+1)):[];
       if(redrawPlots){
         // Read every canvas size before changing legends or canvas attributes.
         const sizes=plots.map(({canvas})=>[canvas.clientWidth,canvas.clientHeight]);
-        plots.forEach((graph,i)=>plot(graph,rows,start,Math.max(end,start+.5),...sizes[i]));
+        const plotEnd=Math.max(incident?all.at(-1).t:end,start+.5);
+        const selection=incident?{index:sampleIndex,marks:incident.marks}:null;
+        plots.forEach((graph,i)=>plot(graph,rows,start,plotEnd,...sizes[i],selection));
         nextPlotAt=now+100;
       }
       if(redrawUart){
@@ -170,7 +184,7 @@ export function initTrace(stepMs){
         nextUartAt=now+100;
       }
     }
-    setText($('source'),replay?'回放 · '+replay.step_ms+' ms':'实时 · '+stepMs+' ms');
+    setText($('source'),replay?(incident?'失败回放':'回放')+' · '+replay.step_ms+' ms':'实时 · '+stepMs+' ms');
     setText($('status'),recording?'录制中 · '+capture.samples.length+' 点':status);
     setText($('record'),recording?'停止录制':'开始录制');
     if($('record').getAttribute('aria-pressed')!==String(recording))$('record').setAttribute('aria-pressed',String(recording));
@@ -183,6 +197,7 @@ export function initTrace(stepMs){
       $('position').value=index;
       $('position').setAttribute('aria-valuetext',at.t.toFixed(3)+' 秒');
     }
+    if(incident&&at)showIncidentFrame(at,incident);
     const pose=at?.pose;
     const position=Array.isArray(pose)&&pose.length>=3&&pose.every(Number.isFinite)
       ?' · '+pose[0].toFixed(3)+', '+pose[1].toFixed(3)+' m · '+(pose[2]*180/Math.PI).toFixed(1)+'°':'';
@@ -196,6 +211,15 @@ export function initTrace(stepMs){
   const stopPlayback=()=>{
     if(frame)clearTimeout(frame);
     frame=0;
+  };
+  const incidentOption=$('group').querySelector('option[value="incident"]');
+  const leaveIncident=()=>{
+    if(!incident)return;
+    incident=null;
+    incidentOption.hidden=true;$('group').value=previousGroup;
+    $('marks').replaceChildren();
+    showIncidentFrame(null);
+    createPlots();
   };
   $('record').onclick=()=>{
     if(recording)stopRecording();
@@ -211,7 +235,7 @@ export function initTrace(stepMs){
     const url=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'}));
     const link=document.createElement('a');
     link.href=url;
-    link.download='moonlight-trace-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json';
+    link.download=(incident?'moonlight-incident-':'moonlight-trace-')+new Date().toISOString().replace(/[:.]/g,'-')+'.json';
     link.click();
     setTimeout(()=>URL.revokeObjectURL(url),1000);
   };
@@ -228,7 +252,7 @@ export function initTrace(stepMs){
           ['pwm','speed','encoder','ir'].some(k=>row[k]!=null&&(!Array.isArray(row[k])||!row[k].every(Number.isFinite))))){
         throw new Error('录制格式无效');
       }
-      stopRecording();stopPlayback();
+      stopRecording();stopPlayback();leaveIncident();
       replay=data;index=0;
       status='已打开录制 · '+replay.samples.length+' 点';
     }catch(error){
@@ -251,7 +275,7 @@ export function initTrace(stepMs){
     advance();
   };
   $('live').onclick=()=>{
-    stopPlayback();
+    stopPlayback();leaveIncident();
     replay=null;
     status=capture?.samples.length?'已录制 · '+capture.samples.length+' 点':'尚未录制';
     draw(true);
@@ -264,7 +288,7 @@ export function initTrace(stepMs){
     if(plotsVisible)draw(true);
   }).observe(plotArea);
   createPlots();draw();
-  return (nextEpoch,batch)=>{
+  function receive(nextEpoch,batch){
     if(!batch?.length)return;
     if(epoch!==undefined&&nextEpoch!==epoch){live=[];stopRecording('场景重置 · 录制已结束');}
     epoch=nextEpoch;
@@ -275,5 +299,28 @@ export function initTrace(stepMs){
       if(capture.samples.length===maxSamples)stopRecording('达到录制上限 · 录制已结束');
     }
     if(!replay)draw();
+  }
+  return {
+    receive,
+    openIncident(clip,names){
+      stopRecording();stopPlayback();
+      if(!incident)previousGroup=$('group').value;
+      replay=incident=clip;
+      incidentOption.hidden=false;$('group').value='incident';createPlots();
+      const jump=mark=>{
+        stopPlayback();
+        index=Math.min(clip.samples.length-1,bound(clip.samples,mark.t));
+        draw(true);
+      };
+      $('marks').replaceChildren(...clip.marks.map(mark=>{
+        const button=document.createElement('button');
+        button.textContent=mark.t.toFixed(3)+' s · '+names[mark.kind];
+        button.onclick=()=>jump(mark);
+        return button;
+      }));
+      status='失败片段 · '+clip.samples.length+' 点'+(clip.partial?' · 提前结束':'');
+      jump(clip.marks[0]);
+      document.getElementById('trace-heading').scrollIntoView({block:'start'});
+    }
   };
 }

@@ -131,6 +131,7 @@ keyboard_driving=False
 trace_epoch=0
 trace_start=sim.getTime()
 trace=[]
+incident_flags=set()
 last_view_wall=time.monotonic()
 active_steps=0
 panel_rate=0.0
@@ -147,6 +148,12 @@ def record(name, **fields):
     diagnostics.event(name, **fields)
 
 def report_error(error):
+    if diagnostics.phase.startswith('firmware_'):
+        incident_flags.add('firmware_error')
+    elif diagnostics.phase in ('algorithm_load','member_vision','member_step'):
+        incident_flags.add('member_error')
+    elif diagnostics.phase=='actuator' and state['mode'] in ('member','firmware'):
+        incident_flags.add(state['mode']+'_error')
     update_log_context()
     reason=diagnostic_reason(error) if diagnostics.phase.startswith('firmware_') else None
     line=None
@@ -276,6 +283,7 @@ def reset(group=None,color=None,stage=None,limit=None):
     trace_epoch+=1
     trace_start=sim.getTime()
     trace.clear()
+    incident_flags.clear()
     if group is not None:state['group']=max(1,int(group))
     if color in ('red','yellow','blue'):state['color']=color
     trial=StageTrial(stage if stage in STAGES else trial.stage,CONFIG)
@@ -546,20 +554,28 @@ while sim.step(STEP)!=-1:
     wall_contact=touches_channel_wall()
     if wall_contact:
         if not state['collision']:
+            incident_flags.add('wall_contact')
             record('wall_contact',stage=trial.stage)
         state['collision']=True
         if state['elapsed']-last_collision_time>1:
             log('超声波区域发生接触');last_collision_time=state['elapsed']
     diagnostics.phase='simulation_step'
     if round_result is None and sim.getTime()>=ready_at:
+        previous_falls=trial.falls
         trial.update(p,grasp,wall_contact,firmware_status.get('sonar_triggers',0))
+        if trial.falls>previous_falls:
+            incident_flags.add('block_dropped')
     if state['running'] and round_limit is not None and state['elapsed']+1e-9>=round_limit:
         finish_round('time')
     block_pose=block.getPosition()
-    trace.append(dict(t=round(sim.getTime()-trace_start,6), mode=state['mode'], running=state['running'],
-                      pwm=pwm, speed=wheel_speed, encoder=current_encoder, ir=sensors['ir'],
-                      sonar=sensors['sonar'], uart_in=uart_in, uart_out=uart_out, pose=p,
-                      grip=grasp, block_position=block_pose))
+    sample=dict(t=round(sim.getTime()-trace_start,6), mode=state['mode'], running=state['running'],
+                pwm=pwm, speed=wheel_speed, encoder=current_encoder, ir=sensors['ir'],
+                sonar=sensors['sonar'], uart_in=uart_in, uart_out=uart_out, pose=p,
+                grip=grasp, block_position=block_pose)
+    if incident_flags:
+        sample['incidents']=sorted(incident_flags)
+        incident_flags.clear()
+    trace.append(sample)
     if tick%PANEL_TICKS==0:
         now=time.monotonic()
         if panel_preview:

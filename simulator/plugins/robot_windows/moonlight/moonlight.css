@@ -4,4 +4,13 @@
 .support p{line-height:1.65;margin:8px 0 0}
 .support code{overflow-wrap:anywhere}
 #map{background-size:100% 100%;background-repeat:no-repeat}
+.incident-panel p{line-height:1.5}
+.incident-panel ol:empty{display:none}
+.incident-panel li{margin:5px 0;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.incident-panel li button,#trace-marks button{padding:4px 7px;font-size:11px}
+.incident-view{display:grid;grid-template-columns:minmax(120px,230px) minmax(0,1fr);gap:10px;margin:8px 0;color:#425d6b;font-size:12px}
+.incident-view[hidden]{display:none}
+#incident-map{background-size:100% 100%;background-repeat:no-repeat}
+#trace-marks{display:flex;flex-wrap:wrap;gap:4px}
+@media(max-width:540px){.incident-view{grid-template-columns:minmax(0,1fr)}.incident-view .map-wrap{max-width:210px}}
 @media(max-width:720px){header{flex-wrap:wrap;gap:8px}header>.badge{display:inline-block}}
