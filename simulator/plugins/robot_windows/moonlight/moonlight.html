@@ -34,11 +34,12 @@
           <label>轮数 <input id="trial-count" type="number" min="1" max="20" value="3"></label>
           <label>每轮秒数 <input id="trial-limit" type="number" min="1" max="180" value="30"></label>
           <label>方案名 <input id="trial-label" type="text" maxlength="50" value="方案 A"></label>
-          <button id="trial-batch">开始多轮</button><button id="trial-export" disabled>导出结果</button><button id="trial-import">对照历史</button>
+          <button id="trial-batch">开始多轮</button><button id="trial-matrix">固定工况（6 轮）</button><button id="trial-export" disabled>导出结果</button><button id="trial-import">对照历史</button>
           <input id="trial-file" type="file" accept=".json,application/json" hidden>
         </div>
+        <p>固定工况按偶数、奇数组各跑红、黄、蓝三个物块。每轮沿用所选赛段、用时和当前车辆设置。</p>
         <p id="trial-summary" role="status">尚无记录</p>
-        <div class="trial-scroll"><table><thead><tr><th>方案／赛段</th><th>抓放</th><th>通道</th><th>停车</th><th>用时</th></tr></thead><tbody id="trial-rows"></tbody></table></div>
+        <div class="trial-scroll"><table><thead><tr><th>方案／赛段／工况</th><th>首个未通过项</th><th>抓放</th><th>通道</th><th>停车</th><th>用时</th></tr></thead><tbody id="trial-rows"></tbody></table></div>
       </details>
     </section>
     <section class="trace-panel" aria-labelledby="trace-heading">

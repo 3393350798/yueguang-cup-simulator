@@ -76,7 +76,7 @@ function send(command,extra={}){
   if(socket?.readyState===1)socket.send(`robot:${robotName}:${payload}`);
   else pending.push(payload);
 }
-const observeTrial=initTrials(send);
+const trials=initTrials(send,incidents);
 function connectionStatus(message, warning=false){
   const badge=$('connection');
   if(badge.textContent!==message)badge.textContent=message;
@@ -103,6 +103,7 @@ function connect(){
   };
   socket.onclose=()=>{
     incidents.disconnect();
+    trials.disconnect();
     connectionStatus(state?'场景已断开 · 刷新重连':'场景未连通 · 刷新重试',true);
   };
 }
@@ -123,10 +124,10 @@ function receive(data){
   if(data.trace_epoch!==state?.trace_epoch){path=[];mapDirty=true;}
   state=data;
   // Consume every batch even if several arrive before the next browser paint.
-  observeTrial(data);
   const epoch=data.panel_session?data.panel_session+':'+data.trace_epoch:data.trace_epoch;
   trace.receive(epoch,data.trace);
   incidents.receive(epoch,data.trace,{stage:data.trial?.stage??'full',color:data.color});
+  trials.receive(data,epoch);
   if(data.image)previewFrame=data.image;
   if(!path.length||Math.hypot(data.pose[0]-path.at(-1)[0],data.pose[1]-path.at(-1)[1])>.006)path.push(data.pose);
   if(path.length>2500)path.shift();

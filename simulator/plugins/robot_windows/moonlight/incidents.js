@@ -63,7 +63,10 @@ function safeClip(value){
 export function initIncidents({stepMs,field,open}){
   const $=id=>document.getElementById('incident-'+id);
   const items=$('items'), input=$('file'), status=$('status');
-  let clips=[], recent=[], epoch, active=null, storing=true;
+  // A live round key links the reports on this page to their own clips.
+  // Never add the controller session or round identity to persisted/exported clips.
+  const clipEpochs=new WeakMap();
+  let clips=[], recent=[], epoch, active=null, storing=true, revision=0;
   const readClips=()=>{
     const raw=localStorage.getItem(storeKey)||'[]';
     if(raw.length>maxStored)return [];
@@ -82,6 +85,7 @@ export function initIncidents({stepMs,field,open}){
     catch{storing=false;}
   };
   function redraw(){
+    revision++;
     $('count').textContent=clips.length?String(clips.length):'';
     const rows=clips.map(clip=>{
       const item=document.createElement('li'),button=document.createElement('button'),time=document.createElement('time');
@@ -111,11 +115,12 @@ export function initIncidents({stepMs,field,open}){
     persist();
     redraw();
   }
-  function begin(row,mark,meta){
+  function begin(mark,meta){
     const samples=recent.map(safeSample).filter(Boolean);
     if(!samples.length)return;
     const clip={format,field,step_ms:stepMs,stage:meta.stage,color:meta.color,
       created:Date.now(),partial:true,marks:[mark],samples};
+    clipEpochs.set(clip,epoch);
     clips.unshift(clip);clips=clips.slice(0,maxClips);
     active={clip,until:mark.t+afterSeconds};
     persist();
@@ -135,6 +140,12 @@ export function initIncidents({stepMs,field,open}){
   window.addEventListener('pagehide',()=>{if(active)persist();});
   redraw();
   return {
+    get revision(){return revision;},
+    hasRound(key){return clips.some(clip=>clip!==active?.clip&&clipEpochs.get(clip)===key);},
+    openRound(key){
+      const clip=clips.find(clip=>clip!==active?.clip&&clipEpochs.get(clip)===key);
+      if(clip)show(clip);
+    },
     receive(nextEpoch,batch,meta){
       if(nextEpoch!==epoch){finish();recent=[];epoch=nextEpoch;}
       let oldest=0;
@@ -153,7 +164,7 @@ export function initIncidents({stepMs,field,open}){
           const mark={kind,t:row.t};
           if(!active){
             if(oldest){recent.splice(0,oldest);oldest=0;}
-            begin(row,mark,meta);continue;
+            begin(mark,meta);continue;
           }
           const marks=active.clip.marks;
           if(marks.length<maxMarks&&!marks.some(m=>m.kind===kind&&mark.t-m.t<.5))marks.push(mark);

@@ -17,6 +17,7 @@ machine = monitor.Machine
 bus = machine.SystemBus
 emulation = EmulationManager.Instance.CurrentEmulation
 bindings = config['bindings']
+bench = config.get('bench', False)
 timer_bases = {1: 0x40012C00, 2: 0x40000000, 3: 0x40000400, 4: 0x40000800}
 uart = machine['sysbus.' + config['vision_uart']]
 tx = []
@@ -78,6 +79,31 @@ def motor(side):
     return duty(pwm) * (forward - reverse)
 
 
+def gpio_mode(pin):
+    if not pin:
+        return 'not_bound'
+    device, number = port(pin)
+    mode = (int(device.ReadDoubleWord(0 if number < 8 else 4)) >> (4 * (number % 8))) & 15
+    return ('alternate' if mode & 8 else 'output') if mode & 3 else 'input'
+
+
+def observe_motor(side, index):
+    pins = {signal: bindings.get(side + '_' + signal) for signal in ('pwm', 'in1', 'in2')}
+    modes = {signal: gpio_mode(pin) for signal, pin in pins.items()}
+    ratio = None
+    fault = None
+    if modes['pwm'] in ('output', 'alternate'):
+        try:
+            ratio = duty(pins['pwm'])
+        except ValueError:
+            fault = 'unsupported_pwm_mapping_or_mode'
+    levels = {signal: output_pin(pins[signal]) if modes[signal] == 'output' else None for signal in ('in1', 'in2')}
+    signed = None
+    if ratio is not None and all(levels[signal] is not None for signal in ('in1', 'in2')):
+        signed = ratio * (levels['in1'] - levels['in2']) * config['motor_signs'][index]
+    return dict(duty=ratio, in1=levels['in1'], in2=levels['in2'], signed_drive=signed, modes=modes, fault=fault)
+
+
 def later(seconds, callback):
     machine.ScheduleAction(TimeInterval.FromSeconds(seconds), Action[TimeInterval](lambda _: callback()))
 
@@ -87,6 +113,12 @@ class Sonar(IGPIOReceiver):
         self.name, self.echo, self.high = name, echo, None
         self.distance = 0.0
         self.count = 0
+        self.triggers = 0
+        self.echo_started = 0
+
+    def start_echo(self):
+        input_pin(self.echo, True)
+        self.echo_started += 1
 
     def OnGPIO(self, number, value):
         if not active:
@@ -99,11 +131,13 @@ class Sonar(IGPIOReceiver):
         elif self.high is not None:
             width = now - self.high
             self.high = None
-            if width >= 0.000009 and 0.02 <= self.distance <= 4.0:
-                self.count += 1
-                pulse = 2 * self.distance / 343.0
-                later(0.0001, lambda: input_pin(self.echo, True))
-                later(0.0001 + pulse, lambda: input_pin(self.echo, False))
+            if width >= 0.000009:
+                if bench:
+                    self.triggers += 1
+                if 0.02 <= self.distance <= 4.0:
+                    self.count += 1
+                    later(0.0001, self.start_echo if bench else lambda: input_pin(self.echo, True))
+                    later(0.0001 + 2 * self.distance / 343.0, lambda: input_pin(self.echo, False))
 
 
 sonars = []
@@ -143,12 +177,13 @@ def step(packet):
         if role.startswith('ir') and role[2:].isdigit():
             index = int(role[2:])
             if index < len(packet['ir']):
-                value = packet['ir'][index]
+                raw = packet['ir'][index]
+                value = raw / 4095.0 if bench else raw
                 input_pin(pin, value >= config['ir_threshold'])
                 # PA0..7 / PB0..1 correspond to ADC channels 0..9.
                 channel = int(pin[2:]) if pin.startswith('PA') and int(pin[2:]) < 8 else int(pin[2:]) + 8 if pin in ('PB0','PB1') else None
                 if channel is not None:
-                    bus.WriteDoubleWord(0x40012480 + channel * 4, int(value * 4095))
+                    bus.WriteDoubleWord(0x40012480 + channel * 4, int(raw if bench else value * 4095))
     for sonar in sonars:
         sonar.distance = packet['sonar'].get(sonar.name, 0.0)
     current = [int(round(packet['encoder'][side] * config['encoder_cpr'] / (2 * math.pi))) for side in ('left','right')]
@@ -166,9 +201,13 @@ def step(packet):
         active = False
     received = tx[:]
     del tx[:]
-    result = dict(left=motor('left') * config['motor_signs'][0], right=motor('right') * config['motor_signs'][1],
-                uart=received, pc=str(machine['sysbus.cpu'].PC), virtual_s=machine.ElapsedVirtualTime.TimeElapsed.TotalSeconds,
+    result = dict(uart=received, pc=str(machine['sysbus.cpu'].PC), virtual_s=machine.ElapsedVirtualTime.TimeElapsed.TotalSeconds,
                 sonar_triggers=sum(s.count for s in sonars))
+    if bench:
+        result['motors'] = {side: observe_motor(side, index) for index, side in enumerate(('left', 'right'))}
+        result['sonars'] = {s.name: dict(triggers=s.triggers, echo_started=s.echo_started) for s in sonars}
+    else:
+        result.update(left=motor('left') * config['motor_signs'][0], right=motor('right') * config['motor_signs'][1])
     if 'gripper_close' in bindings:
         result['gripper_closed'] = bool(output_pin(bindings['gripper_close']))
     if 'gripper_lift' in bindings:

@@ -2,6 +2,7 @@
 from pathlib import Path
 import atexit
 import codecs
+from contextlib import suppress
 import json
 import os
 import shutil
@@ -54,9 +55,9 @@ def find_renode(setting=''):
 
 
 class FirmwareBridge:
-    def __init__(self, config=None, board=None):
-        self.config = config or json.loads((ROOT/'firmware.json').read_text(encoding='utf-8-sig'))
-        board = board or json.loads((ROOT/'board.json').read_text(encoding='utf-8-sig'))
+    def __init__(self, config=None, board=None, *, bench=False):
+        self.config = config if config is not None else json.loads((ROOT/'firmware.json').read_text(encoding='utf-8-sig'))
+        board = board if board is not None else json.loads((ROOT/'board.json').read_text(encoding='utf-8-sig'))
         image = self.config.get('image')
         if not image:
             raise FirmwareImageMissing('请在 scripts/import-hardware.bat 的固件页中导入 ELF / HEX / BIN。')
@@ -65,10 +66,12 @@ class FirmwareBridge:
             raise FirmwareImageMissing('找不到已导入的固件镜像，请重新导入。')
         executable = find_renode(self.config.get('renode', ''))
         bindings = {role: resolve_pin(pin, board.get('mcu_reference', '')) for role, pin in board['bindings'].items()}
-        for side in ('left','right'):
-            if not all(side+suffix in bindings for suffix in ('_pwm','_in1','_in2')):
-                raise MotorPinsMissing('请填写'+side+'_pwm / '+side+'_in1 / '+side+'_in2 三个电机驱动引脚。')
-        self.folder = Path(tempfile.mkdtemp(prefix='moonlight-fw-'))
+        if not bench:
+            for side in ('left','right'):
+                if not all(side+suffix in bindings for suffix in ('_pwm','_in1','_in2')):
+                    raise MotorPinsMissing('请填写'+side+'_pwm / '+side+'_in1 / '+side+'_in2 三个电机驱动引脚。')
+        self._temporary = tempfile.TemporaryDirectory(prefix='moonlight-fw-bench-') if bench else None
+        self.folder = Path(self._temporary.name if self._temporary else tempfile.mkdtemp(prefix='moonlight-fw-'))
         self.process = self.socket = self.stream = None
         self.uart = ''
         self.uart_raw = b''
@@ -76,6 +79,13 @@ class FirmwareBridge:
         self.gripper = None
         self.lift = None
         atexit.register(self.close)
+        try:
+            self._launch(image, executable, bindings, bench)
+        except BaseException:
+            self.close()
+            raise
+
+    def _launch(self, image, executable, bindings, bench):
         for path in (ROOT/'tools/firmware').glob('*.*'):
             shutil.copyfile(path, self.folder/path.name)
         platform = (self.folder/'f103.repl').read_text(encoding='utf-8')
@@ -84,7 +94,7 @@ class FirmwareBridge:
         (self.folder/'f103.repl').write_text(platform, encoding='utf-8')
         suffix = image.suffix.lower()
         shutil.copyfile(image, self.folder/('member'+suffix))
-        (self.folder/'session.json').write_text(json.dumps(dict(self.config, bindings=bindings)), encoding='utf-8')
+        (self.folder/'session.json').write_text(json.dumps(dict(self.config, bindings=bindings, bench=bench)), encoding='utf-8')
         load = {'.elf':'LoadELF', '.axf':'LoadELF', '.hex':'LoadHEX', '.bin':'LoadBinary'}[suffix]
         lines = ['include @MoonlightSTM32Timer.cs', 'include @MoonlightSTM32ADC.cs',
                  'include @MoonlightSTM32USART.cs', 'mach create',
@@ -99,24 +109,22 @@ class FirmwareBridge:
         self.log = (self.folder/'renode.log').open('wb')
         env = dict(os.environ, YUEGUANG_FW_SESSION=str(self.folder))
         try:
-            try:
-                self.process = subprocess.Popen([executable, '--disable-xwt', '--console', '--plain', str(self.folder/'run.resc')],
-                    cwd=self.folder, env=env, stdin=subprocess.PIPE, stdout=self.log, stderr=self.log,
-                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-            except OSError as error:
-                raise RenodeLaunchFailed('无法启动 Renode。') from error
-            deadline = time.monotonic()+35
-            while not (self.folder/'port').exists():
-                startup_log = (self.folder/'renode.log').read_text(encoding='utf-8', errors='replace')
-                if self.process.poll() is not None or time.monotonic() > deadline or 'There was an error' in startup_log:
-                    self.log.flush()
-                    raise RenodeLaunchFailed('Renode未能加载固件：'+(self.folder/'renode.log').read_text(encoding='utf-8', errors='replace')[-2200:])
-                time.sleep(.1)
-            self.socket = socket.create_connection(('127.0.0.1', int((self.folder/'port').read_text())), timeout=10)
-            self.stream = self.socket.makefile('rwb')
-        except Exception:
-            self.close()
-            raise
+            self.process = subprocess.Popen([executable, '--disable-xwt', '--console', '--plain', str(self.folder/'run.resc')],
+                cwd=self.folder, env=env, stdin=subprocess.PIPE, stdout=self.log, stderr=self.log,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+        except OSError as error:
+            raise RenodeLaunchFailed('无法启动 Renode。') from error
+        deadline = time.monotonic()+35
+        while not (self.folder/'port').exists():
+            startup_log = (self.folder/'renode.log').read_text(encoding='utf-8', errors='replace')
+            if self.process.poll() is not None or time.monotonic() > deadline or 'There was an error' in startup_log:
+                self.log.flush()
+                if bench:
+                    raise RenodeLaunchFailed('Renode 未能载入镜像，或虚拟芯片未就绪。请运行启动自检并核对固件格式。')
+                raise RenodeLaunchFailed('Renode未能加载固件：'+(self.folder/'renode.log').read_text(encoding='utf-8', errors='replace')[-2200:])
+            time.sleep(.1)
+        self.socket = socket.create_connection(('127.0.0.1', int((self.folder/'port').read_text())), timeout=10)
+        self.stream = self.socket.makefile('rwb')
 
     def step(self, sensors, dt, uart=''):
         packet = {key:sensors[key] for key in ('ir','sonar','encoder')}
@@ -144,13 +152,14 @@ class FirmwareBridge:
 
     def close(self):
         if self.socket:
-            try:
+            with suppress(OSError):
                 self.socket.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
             if self.stream:
-                self.stream.close()
-            self.socket.close()
+                with suppress(OSError):
+                    self.stream.close()
+            with suppress(OSError):
+                self.socket.close()
+            self.stream = None
             self.socket = None
         if self.process and self.process.poll() is None:
             self.process.terminate()
@@ -158,5 +167,12 @@ class FirmwareBridge:
                 self.process.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 self.process.kill()
+                self.process.wait(timeout=3)
+        if self.process and self.process.stdin:
+            self.process.stdin.close()
         if hasattr(self, 'log'):
             self.log.close()
+        if self._temporary:
+            self._temporary.cleanup()
+            self._temporary = None
+        atexit.unregister(self.close)

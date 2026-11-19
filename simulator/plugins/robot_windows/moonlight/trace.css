@@ -24,3 +24,5 @@
 .trial-scroll{overflow:auto;max-height:260px;margin-bottom:14px}
 .trial-scroll table{border-collapse:collapse;min-width:445px;width:100%;font-size:11px}
 .trial-scroll td,.trial-scroll th{padding:7px 6px;text-align:left;border-bottom:1px solid #ecf1f4}
+.trial-scroll td:nth-child(2){min-width:115px}
+.trial-scroll td .small{margin-top:4px}
