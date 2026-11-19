@@ -7,7 +7,7 @@
 ## 开始使用
 
 1. 安装 [Webots R2025a](https://github.com/cyberbotics/webots/releases/tag/R2025a) 和 [Python 3.11～3.13](https://www.python.org/downloads/)。安装 Python 时选择加入 PATH。
-2. [下载 v0.6.3 ZIP](https://github.com/3393350798/yueguang-cup-simulator/releases/download/v0.6.3/yueguang-cup-simulator-v0.6.3.zip) 并解压。在 Windows 下，双击 `setup.bat`，等待 Python 环境与依赖安装完毕，再关闭窗口。
+2. [下载 v0.6.4 ZIP](https://github.com/3393350798/yueguang-cup-simulator/releases/download/v0.6.4/yueguang-cup-simulator-v0.6.4.zip) 并解压。在 Windows 下，双击 `setup.bat`，等待 Python 环境与依赖安装完毕，再关闭窗口。
 3. 双击 `start.bat`，等待 Webots 加载赛场，脚本会自动打开中文浏览器面板。
 4. 可先使用「手动探索」查看场景和传感器；编写程序后选择「会员算法」，点击「重载算法」和「开始运行」。
 
@@ -71,7 +71,7 @@ sh start.sh
 - 地面图形来自 2000 × 2000 mm「赛规定尺版」DWG；起点和终点外框 250 × 250 mm、内框 205 × 205 mm。拾取框外边长 80 mm。
 - 默认差速小车：底盘长 150 mm，含轮宽约 139 mm；轮径 54 mm，轮距 125 mm，可由 `simulator/robot.json` 调整。
 - 黑线宽 22.5 mm，六个对称圆圈，外径 87.5 mm、内径 42.5 mm。
-- 超声波区黑框边线中心距 500 × 375 mm；区内没有贯穿循迹线，保留印布上的文字和边框。两块 330 mm 实体挡板沿长边中心线布置，两端分别留 60 mm、110 mm；挡板厚度、高度沿用练习模型。
+- 超声波区黑框边线中心距 500 × 375 mm；区内没有贯穿循迹线，保留印布上的文字和边框。两块实体挡板各长 500 mm，沿黑框长边中心线布置，两端对齐短边中心线。通道两端开放。
 - 立牌放在印布右上角的定位横条上；练习标签为 tag36h11，黑色码区边长 80 mm，含白边牌面 100 mm。
 - 物块依据赛题图2建模：底径 56 mm、顶径 36 mm、总高 70 mm，底座高 8 mm、上颈高 10 mm，中间为高 52 mm 的锥台；红黄蓝使用同一外形。物块始终参与 Webots 物理碰撞，可能滑落、移位或翻倒。质量暂设 40 g，实物称重后可自行修改。
 

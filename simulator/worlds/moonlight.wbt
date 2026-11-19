@@ -20,12 +20,12 @@ DEF FLOOR Solid {
   boundingObject Plane { size 2 2 }
 }
 
-DEF WALL_0 Solid { name "WALL_0" translation -0.041018 -0.193707 0.065 rotation 0 0 1 0
-children [ Shape { appearance PBRAppearance { baseColor 0.34 0.42 0.54 roughness 0.85 metalness 0 } geometry DEF WALL_0_GEOM Box { size 0.33 0.012 0.14 } } ]
+DEF WALL_0 Solid { name "WALL_0" translation -0.016018 -0.193707 0.065 rotation 0 0 1 0
+children [ Shape { appearance PBRAppearance { baseColor 0.34 0.42 0.54 roughness 0.85 metalness 0 } geometry DEF WALL_0_GEOM Box { size 0.5 0.012 0.14 } } ]
 boundingObject USE WALL_0_GEOM
 }
-DEF WALL_1 Solid { name "WALL_1" translation -0.041018 -0.568707 0.065 rotation 0 0 1 0
-children [ Shape { appearance PBRAppearance { baseColor 0.34 0.42 0.54 roughness 0.85 metalness 0 } geometry DEF WALL_1_GEOM Box { size 0.33 0.012 0.14 } } ]
+DEF WALL_1 Solid { name "WALL_1" translation -0.016018 -0.568707 0.065 rotation 0 0 1 0
+children [ Shape { appearance PBRAppearance { baseColor 0.34 0.42 0.54 roughness 0.85 metalness 0 } geometry DEF WALL_1_GEOM Box { size 0.5 0.012 0.14 } } ]
 boundingObject USE WALL_1_GEOM
 }
 DEF TAG Solid { name "tag" translation 0.8592679999999999 0.8716539999999999 0.125 rotation 1 0 0 1.5707963

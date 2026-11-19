@@ -52,6 +52,11 @@ SIZE = field['size_mm']/1000
 def field_point(point):
     return [coordinate/1000 - SIZE/2 for coordinate in point]
 
+channel = [field_point(point) for point in layout['channel']]
+(channel_left, channel_top), (channel_right, channel_bottom) = channel
+# The walls follow the full centerlines of the two long sides of the printed frame.
+walls = [[channel_left,y,channel_right,y] for y in (channel_top,channel_bottom)]
+
 config = dict(step_ms=step_ms, physics_step_ms=physics_step_ms,
               field_revision='rules-2000', floor_size=SIZE, line_width=layout['line_width']/1000,
               wheel_radius=radius, axle_length=track, body_size=[length,max(width,track+wheel_width)],
@@ -63,12 +68,11 @@ config = dict(step_ms=step_ms, physics_step_ms=physics_step_ms,
                             center=field_point(circle['center']),
                             inner_radius=layout['circle_inner_diameter']/2000)
                        for circle in layout['circles']],
-              channel=[field_point(point) for point in layout['channel']],
-              walls=[field_point(wall[:2])+field_point(wall[2:]) for wall in layout['walls']],
+              channel=channel, walls=walls,
               wall_thickness=.012, wall_height=.14,
               tag_family='tag36h11', tag_size=0.08,
               block=block_spec,
-              geometry_note='2000 × 2000 mm 赛规定尺版；实体挡板和标签安装参数用于练习')
+              geometry_note='2000 × 2000 mm 赛规定尺版；挡板沿超声波区黑框长边全长布置')
 (ROOT/'scene.json').write_text(json.dumps(config,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
 
 # Render CAD ink at higher resolution first to preserve edges and hollow regions.

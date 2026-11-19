@@ -8,7 +8,6 @@
     "tag": [1859.268,1871.654],
     "channel": [[733.982,806.293],[1233.982,431.293]],
     "circles": [{"side":"right","color":"red","center":[1209.4,1931.7225]},{"side":"right","color":"yellow","center":[1359.4,1931.7225]},{"side":"right","color":"blue","center":[1509.4,1931.7225]},{"side":"left","color":"red","center":[1209.4,1431.7225]},{"side":"left","color":"yellow","center":[1359.4,1431.7225]},{"side":"left","color":"blue","center":[1509.4,1431.7225]}],
-    "walls": [[793.982,806.293,1123.982,806.293],[793.982,431.293,1123.982,431.293]],
     "line_width": 22.5,
     "start_outer_size": 250,
     "start_inner_size": 205,
