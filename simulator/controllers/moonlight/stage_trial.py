@@ -5,6 +5,10 @@ STAGES = {'full':'全程', 'pickup':'识别与抓放', 'channel':'超声波通�
 
 
 def starting_pose(config, stage):
+    override = config.get({'full':'start_pose', 'pickup':'pickup_pose',
+                           'channel':'channel_pose', 'parking':'parking_pose'}.get(stage, 'start_pose'))
+    if override is not None:
+        return list(override)
     if stage == 'pickup':
         x,y = config['pickup']
         reach = config['gripper'].get('reach_mm', 0)/1000
@@ -60,6 +64,7 @@ class StageTrial:
         alignment = abs(yaw-round(yaw/(pi/2))*(pi/2))
         return dict(stage=self.stage,mode=state['mode'],group=state['group'],color=state['color'],
                     elapsed=round(state['elapsed'],3),start=self.start,step_ms=self.config['step_ms'],
+                    field_revision=self.config.get('field_revision','practice-legacy'),
                     environment=self.config['robot'].get('imperfections',{}),
                     calibration=self.config['robot'].get('calibration',{}),
                     grasped=state['grasped'], placed=state['placed'], falls=self.falls,

@@ -115,9 +115,8 @@ function draw(){
   if(image.complete)ctx.drawImage(image,0,0,size,size);
   if(!config)return;
   const p=point=>[(point[0]/config.floor_size+.5)*size,(.5-point[1]/config.floor_size)*size];
-  const a=p(config.channel[0]),b=p(config.channel[1]);
   ctx.strokeStyle='#667b91';ctx.lineWidth=5;
-  for(const y of [a[1],b[1]]){ctx.beginPath();ctx.moveTo(a[0],y);ctx.lineTo(b[0],y);ctx.stroke();}
+  for(const [x0,y0,x1,y1] of config.walls){ctx.beginPath();ctx.moveTo(...p([x0,y0]));ctx.lineTo(...p([x1,y1]));ctx.stroke();}
   if(path.length){ctx.strokeStyle='#1caa91a0';ctx.lineWidth=2;ctx.beginPath();path.forEach((v,i)=>{const c=p(v);i?ctx.lineTo(...c):ctx.moveTo(...c);});ctx.stroke();}
   if(state){
     const c=p(state.pose),scale=size/config.floor_size/1000;
@@ -135,7 +134,6 @@ function draw(){
     const color={red:'#df263e',yellow:'#dac226',blue:'#2460ec'}[state.color];
     ctx.fillStyle=color;ctx.beginPath();ctx.arc(...p(state.block_position),5,0,Math.PI*2);ctx.fill();
   }
-  for(const [name,text] of [['start','S'],['finish','F']]){const c=p(config[name]);ctx.fillStyle='#344d5f';ctx.font='600 16px sans-serif';ctx.textAlign='center';ctx.fillText(text,c[0],c[1]+5);}
 }
 image.onload=draw;
 for(const id of ['start','pause','reload','snapshot','channel'])$(id).onclick=()=>send(id);

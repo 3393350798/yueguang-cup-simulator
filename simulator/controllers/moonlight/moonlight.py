@@ -55,6 +55,13 @@ def load_algorithm():
 sim=Supervisor()
 car=sim.getSelf()
 block=sim.getFromDef('BLOCK')
+finish_half_size=[side/2 for side in CONFIG.get('finish_inner_size',[.205,.205])]
+channel_tl,channel_br=CONFIG['channel']
+wall_half_width=CONFIG.get('wall_thickness',.012)/2
+wall_lines=CONFIG.get('walls',[[channel_tl[0],y,channel_br[0],y]
+                              for y in (channel_br[1]-wall_half_width,channel_tl[1]+wall_half_width)])
+walls=[(line,sim.getFromDef(f'WALL_{i}')) for i,line in enumerate(wall_lines)]
+wall_ids={node.getId() for _,node in walls if node is not None}
 tag_texture=sim.getFromDef('TAG_TEXTURE').getField('url')
 block_color=sim.getFromDef('BLOCK_MATERIAL').getField('baseColor')
 translation=car.getField('translation')
@@ -150,12 +157,34 @@ def pose():
 
 def place_result():
     p=block.getPosition()
-    nearest=min(CONFIG['circles'],key=lambda c:math.dist(p[:2],c['center']))
-    distance=math.dist(p[:2],nearest['center'])
-    if distance<=.02125:
+    orientation=block.getOrientation()
+    half_height=CONFIG.get('block',{}).get('height_mm',70)/2000
+    base_center=[p[0]-half_height*orientation[2],p[1]-half_height*orientation[5]]
+    nearest=min(CONFIG['circles'],key=lambda c:math.dist(base_center,c['center']))
+    distance=math.dist(base_center,nearest['center'])
+    if distance<=nearest.get('inner_radius',.02125):
         correct=(nearest['side']==('left' if state['group']%2==0 else 'right') and nearest['color']==state['color'])
         return dict(side=nearest['side'],color=nearest['color'],correct=correct,offset_mm=round(distance*1000,1))
     return None
+
+
+def touches_channel_wall():
+    contacts=car.getContactPoints(True)
+    if any(contact.node_id in wall_ids for contact in contacts):
+        return True
+    for (x0,y,x1,_),node in walls:
+        if node is None:
+            continue
+        near=[contact.point for contact in contacts
+              if contact.point[2]>CONFIG.get('floor_z',-.005)+.003
+              and min(x0,x1)-.005<=contact.point[0]<=max(x0,x1)+.005
+              and abs(contact.point[1]-y)<=wall_half_width+.004]
+        if near:
+            # Webots may report a contact's owning node instead of the other participant.
+            points=node.getContactPoints()
+            if any(math.dist(point.point,p)<.0015 for point in points for p in near):
+                return True
+    return False
 
 def observe_gripper():
     observed=claw.observe()
@@ -385,7 +414,7 @@ while sim.step(STEP)!=-1:
     def contact_inside(local):
         x=p[0]+local[0]*math.cos(p[2])-local[1]*math.sin(p[2])
         y=p[1]+local[0]*math.sin(p[2])+local[1]*math.cos(p[2])
-        return abs(x-finish[0])<=.1025 and abs(y-finish[1])<=.1025
+        return abs(x-finish[0])<=finish_half_size[0] and abs(y-finish[1])<=finish_half_size[1]
     in_finish=all(contact_inside(point) for point in contact_centers)
     still=still+DT if in_finish and max(abs(v) for v in wheel_speed)<.005 else 0
     state['parked']=still>=3
@@ -395,18 +424,13 @@ while sim.step(STEP)!=-1:
         width,height=CONFIG['body_size']
         ext_x=(abs(math.cos(p[2]))*width+abs(math.sin(p[2]))*height)/2
         ext_y=(abs(math.sin(p[2]))*width+abs(math.cos(p[2]))*height)/2
-        state['aligned']=(abs(p[0]-finish[0])+ext_x<=.1025 and abs(p[1]-finish[1])+ext_y<=.1025 and yaw_error<=math.radians(10))
-    wall_contact=False
-    for contact in car.getContactPoints(True):
-        point=contact.point
-        a,b=CONFIG['channel']
-        if (point[2]>.015 and a[0]-.005<point[0]<b[0]+.005
-                and min(abs(point[1]-y) for y in (a[1],b[1]))<.014):
-            wall_contact=True
-            state['collision']=True
-            if state['elapsed']-last_collision_time>1:
-                log('超声波区域发生接触');last_collision_time=state['elapsed']
-            break
+        state['aligned']=(abs(p[0]-finish[0])+ext_x<=finish_half_size[0]
+                          and abs(p[1]-finish[1])+ext_y<=finish_half_size[1] and yaw_error<=math.radians(10))
+    wall_contact=touches_channel_wall()
+    if wall_contact:
+        state['collision']=True
+        if state['elapsed']-last_collision_time>1:
+            log('超声波区域发生接触');last_collision_time=state['elapsed']
     if round_result is None and sim.getTime()>=ready_at:
         trial.update(p,grasp,wall_contact,firmware_status.get('sonar_triggers',0))
     if state['running'] and round_limit is not None and state['elapsed']+1e-9>=round_limit:

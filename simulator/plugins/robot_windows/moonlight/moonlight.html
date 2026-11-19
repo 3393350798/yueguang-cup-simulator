@@ -1,12 +1,13 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>月光杯 · 仿真练习台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="moonlight.css"><link rel="stylesheet" href="trace.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>月光杯 · 仿真练习台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="moonlight.css?v=rules-2000"><link rel="stylesheet" href="trace.css"></head>
 <body>
 <header><div><span class="eyebrow">MOONLIGHT / ROBOTICS LAB</span><h1>月光杯<span>仿真练习台</span></h1></div><span id="connection" class="badge">连接场景中</span></header>
 <main>
   <section class="workspace">
     <div class="section-head"><h2>赛场与轨迹</h2><span id="timer">00:00.0</span></div>
-    <div class="map-wrap"><canvas id="map" width="720" height="720"></canvas><span class="map-note">教学近似布局 · 原始传感器与图像</span></div>
+    <div class="map-wrap"><canvas id="map" width="720" height="720"></canvas></div>
+    <p class="map-note">2000 × 2000 mm 赛规定尺版 · 灰蓝线为实体挡板</p>
     <div class="toolbar"><button id="start" class="primary">开始运行</button><button id="pause">暂停 / 停车</button><button id="reset">重置场景</button><button id="reload">重载程序</button></div>
     <p id="message" role="status">先选择模式，再点击开始。会员模板初始为停车。</p>
     <div class="settings"><label>组号 <input id="group" type="number" min="1" value="2"></label><label>物块 <select id="color"><option value="red">红色</option><option value="yellow">黄色</option><option value="blue">蓝色</option></select></label><span>修改后点击「重置场景」</span></div>

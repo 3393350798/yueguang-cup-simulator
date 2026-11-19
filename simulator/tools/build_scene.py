@@ -2,7 +2,7 @@
 from pathlib import Path
 import json
 import math
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 from hardware_import import read_json
 from imported_robot import assembly, board_shape
 from competition_block import block_node
@@ -12,8 +12,6 @@ from imperfections import Imperfections
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / 'worlds' / 'textures'
 ASSETS.mkdir(parents=True, exist_ok=True)
-SCALE = 0.0027
-SIZE = 2.0
 FLOOR_Z = -.005
 robot = json.loads((ROOT/'robot.json').read_text(encoding='utf-8-sig'))
 step_ms = robot.get('step_ms', 32)
@@ -47,81 +45,48 @@ radius, wheel_width, track = [wheels[k]/1000 for k in ('radius_mm','width_mm','t
 
 def meters(values):return [x/1000 for x in values]
 
-def xy(point):
-    return [(point[0] - 437.5) * SCALE, (415 - point[1]) * SCALE]
+field = read_json(ROOT/'assets'/'competition_field.json')
+layout = field['layout_mm']
+SIZE = field['size_mm']/1000
 
-def bezier(a, b, c, d, n=45):
-    return [tuple((1-t)**3*a[j]+3*(1-t)**2*t*b[j]+3*(1-t)*t*t*c[j]+t**3*d[j]
-                  for j in range(2)) for t in [i/n for i in range(1, n+1)]]
+def field_point(point):
+    return [coordinate/1000 - SIZE/2 for coordinate in point]
 
-path = [(195, 670), (555, 670)]
-def curve(b, c, d):
-    path.extend(bezier(path[-1], b, c, d))
-
-curve((595,670),(580,635),(609,650))
-curve((635,668),(622,624),(648,618))
-curve((678,617),(704,596),(691,570))
-curve((678,548),(678,514),(704,483))
-curve((735,449),(727,403),(690,370))
-curve((664,350),(659,395),(638,383))
-curve((611,372),(623,351),(662,331))
-curve((699,316),(716,299),(716,242))
-path += [(716,202),(402,202),(402,280)]
-curve((402,321),(429,337),(470,337))
-curve((507,337),(540,371),(540,420))
-curve((540,451),(560,475),(598,475))
-path += [(598,534),(519,534)]
-entry_index = len(path)-1
-path += [(363,534),(208,534),(325,416),(195,416),(195,190)]
-
-points = [xy(p) for p in path]
-circles = []
-for row, py in [('right',202-0.25/SCALE), ('left',202+0.25/SCALE)]:
-    for color, px in [('red',565-0.15/SCALE),('yellow',565),('blue',565+0.15/SCALE)]:
-        circles.append(dict(side=row,color=color,center=xy((px,py))))
 config = dict(step_ms=step_ms, physics_step_ms=physics_step_ms,
-              floor_size=SIZE, line_width=0.0225, wheel_radius=radius,
-              axle_length=track, body_size=[length,max(width,track+wheel_width)],
+              field_revision='rules-2000', floor_size=SIZE, line_width=layout['line_width']/1000,
+              wheel_radius=radius, axle_length=track, body_size=[length,max(width,track+wheel_width)],
               robot=robot, board=board, robot_origin_z=origin_z, floor_z=FLOOR_Z,
-              gripper=gripper, start=xy((195,670)),
-              finish=xy((195,190)), pickup=xy((632,202)), marker=xy((565,202)),
-              tag=xy((715,141)), circles=circles,
-              channel=[xy((363,475)),xy((519,594))],
+              gripper=gripper, **{key:field_point(layout[key])
+                                  for key in ('start','finish','pickup','marker','tag')},
+              finish_inner_size=[layout['finish_inner_size']/1000]*2,
+              circles=[dict(side=circle['side'],color=circle['color'],
+                            center=field_point(circle['center']),
+                            inner_radius=layout['circle_inner_diameter']/2000)
+                       for circle in layout['circles']],
+              channel=[field_point(point) for point in layout['channel']],
+              walls=[field_point(wall[:2])+field_point(wall[2:]) for wall in layout['walls']],
+              wall_thickness=.012, wall_height=.14,
               tag_family='tag36h11', tag_size=0.08,
               block=block_spec,
-              geometry_note='教学近似布局；以正式 DWG 更新坐标，标签/挡板布置为练习配置')
+              geometry_note='2000 × 2000 mm 赛规定尺版；实体挡板和标签安装参数用于练习')
 (ROOT/'scene.json').write_text(json.dumps(config,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
 
-im = Image.new('RGB',(2048,2048),'white')
-draw=ImageDraw.Draw(im)
-def pix(p):
-    return ((p[0]/SIZE+0.5)*2048,(0.5-p[1]/SIZE)*2048)
-def line(poly,width=0.0225,fill='black'):
-    draw.line([pix(p) for p in poly],fill=fill,width=round(width/SIZE*2048),joint='curve')
-def box(center,side,width=0.0225):
-    x,y=center;h=side/2
-    line([(x-h,y-h),(x+h,y-h),(x+h,y+h),(x-h,y+h),(x-h,y-h)],width)
+# Render CAD ink at higher resolution first to preserve edges and hollow regions.
+resolution = 4096
+scale = resolution/field['size_mm']
+def pixel(point):
+    return (point[0]*scale,(field['size_mm']-point[1])*scale)
 
-line(points[:entry_index+1])
-line(points[entry_index+1:])
-# 区域轮廓为浅色虚线，贯穿区域的循迹线留空。
-a,b=config['channel'];x0,x1=a[0],b[0];y0,y1=b[1],a[1]
-for y in [y0,y1]:
-    x=x0
-    while x<x1:
-        line([(x,y),(min(x+.025,x1),y)],.004,'#c1c9d4');x+=.045
-line([(x0,y0),(x0,y1)],.0225)
-for circle in circles:
-    cx,cy=pix(circle['center']);r=.04375/SIZE*2048
-    draw.ellipse([cx-r,cy-r,cx+r,cy+r],fill={'red':'#f02b37','yellow':'#eed609','blue':'#2460ec'}[circle['color']])
-    r=.02125/SIZE*2048
-    draw.ellipse([cx-r,cy-r,cx+r,cy+r],fill='white')
-box(config['start'],.2275)
-box(config['finish'],.2275)
-box(config['pickup'],.060,.009)
-mx,my=config['marker'];line([(mx,my-.08),(mx,my+.08)])
-for key,letter in [('start','S'),('finish','F')]:
-    draw.text(pix(config[key]),letter,fill='#334957',font=ImageFont.load_default(size=56),anchor='mm')
+im = Image.new('RGB',(resolution,resolution),'white')
+for shape in field['shapes']:
+    mask = Image.new('1',im.size)
+    draw = ImageDraw.Draw(mask)
+    for polygon in shape['polygons']:
+        draw.polygon([pixel(point) for point in polygon['outer']],fill=1)
+        for hole in polygon['holes']:
+            draw.polygon([pixel(point) for point in hole],fill=0)
+    im.paste(shape['fill'],(0,0),mask)
+im = im.resize((2048,2048),Image.Resampling.LANCZOS)
 im.save(ASSETS/'track.png')
 window_assets=ROOT/'plugins/robot_windows/moonlight'
 window_assets.mkdir(parents=True,exist_ok=True)
@@ -163,17 +128,22 @@ DEF FLOOR Solid {
   children [ Shape { appearance PBRAppearance {
     baseColorMap ImageTexture { url [ "textures/track.png" ] filtering 5 }
     roughness 1 metalness 0
-  } geometry Plane { size 2 2 } } ]
-  boundingObject Plane { size 2 2 }
+  } geometry Plane { size FLOOR_SIZE FLOOR_SIZE } } ]
+  boundingObject Plane { size FLOOR_SIZE FLOOR_SIZE }
 }
 '''.replace('STEP_MS', str(physics_step_ms))
    .replace('GRIP_FRICTION', f'{gripper.get("friction", .85):.7g}')
    .replace('FLOOR_FRICTION', f'{block_spec["floor_friction"]:.7g}')
    .replace('FLOOR_Z', f'{FLOOR_Z:.7g}')
+   .replace('FLOOR_SIZE', f'{SIZE:.7g}')
    .replace('LIGHT_INTENSITY', f'{1.3 * light_gain:g}')
    .replace('LIGHT_AMBIENT', f'{min(1, 0.65 * light_gain):g}')]
-for i,y in enumerate([y0-.006,y1+.006]):
-    parts.append(solid_box(f'WALL_{i}',[(x0+x1)/2,y,.065],[x1-x0,.012,.14],'0.34 0.42 0.54'))
+wall_height = config['wall_height']
+for i,(x0,y0,x1,y1) in enumerate(config['walls']):
+    center = [(x0+x1)/2,(y0+y1)/2,FLOOR_Z+wall_height/2]
+    dimensions = [math.hypot(x1-x0,y1-y0),config['wall_thickness'],wall_height]
+    parts.append(solid_box(f'WALL_{i}',center,dimensions,'0.34 0.42 0.54',
+                           f'0 0 1 {math.atan2(y1-y0,x1-x0):.7g}'))
 # 立牌图案平面默认位于局部 XY，将法线转向南侧。
 tx,ty=config['tag']
 parts.append(f'''DEF TAG Solid {{ name "tag" translation {tx} {ty} 0.125 rotation 1 0 0 1.5707963

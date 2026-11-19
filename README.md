@@ -2,12 +2,12 @@
 
 在车体结构完成前，用可配置的虚拟差速小车获取摄像头、红外、超声波和编码器数据，编写自己的视觉与控制程序。采用 **Webots R2025a＋Python**，面向月光杯参赛会员。
 
-![中文练习面板](docs/images/panel.png)
+![中文练习面板示意（此前版本）](docs/images/panel.png)
 
 ## 开始使用
 
 1. 安装 [Webots R2025a](https://github.com/cyberbotics/webots/releases/tag/R2025a) 和 [Python 3.11～3.13](https://www.python.org/downloads/)。安装 Python 时选择加入 PATH。
-2. [下载 v0.6.1 ZIP](https://github.com/3393350798/yueguang-cup-simulator/releases/download/v0.6.1/yueguang-cup-simulator-v0.6.1.zip) 并解压。在 Windows 下，双击 `setup.bat`，等待 Python 环境与依赖安装完毕，再关闭窗口。
+2. [下载 v0.6.2 ZIP](https://github.com/3393350798/yueguang-cup-simulator/releases/download/v0.6.2/yueguang-cup-simulator-v0.6.2.zip) 并解压。在 Windows 下，双击 `setup.bat`，等待 Python 环境与依赖安装完毕，再关闭窗口。
 3. 双击 `start.bat`，等待 Webots 加载赛场，脚本会自动打开中文浏览器面板。
 4. 可先使用「手动探索」查看场景和传感器；编写程序后选择「会员算法」，点击「重载算法」和「开始运行」。
 
@@ -65,16 +65,16 @@ sh start.sh
 
 ## 场景与模型
 
-![Webots 实际场景](docs/images/scene.png)
+![赛规定尺版地图](simulator/worlds/textures/track.png)
 
-- 最终赛事布局的教学近似赛场：右侧曲线、顶部分类放置、中部圆弧、下部超声波区域、左侧折线与终点。
+- 地面图形来自 2000 × 2000 mm「赛规定尺版」DWG；起点和终点外框 250 × 250 mm、内框 205 × 205 mm。拾取框外边长 80 mm。
 - 默认差速小车：底盘长 150 mm，含轮宽约 139 mm；轮径 54 mm，轮距 125 mm，可由 `simulator/robot.json` 调整。
 - 黑线宽 22.5 mm，六个对称圆圈，外径 87.5 mm、内径 42.5 mm。
-- 超声波区内部留白，设置两侧实体挡板与出口检测线。
-- 练习标签为 tag36h11，黑色码区边长 80 mm，含白边牌面 100 mm。
+- 超声波区黑框边线中心距 500 × 375 mm；区内没有贯穿循迹线，保留印布上的文字和边框。两块 330 mm 实体挡板沿长边中心线布置，两端分别留 60 mm、110 mm；挡板厚度、高度沿用练习模型。
+- 立牌放在印布右上角的定位横条上；练习标签为 tag36h11，黑色码区边长 80 mm，含白边牌面 100 mm。
 - 物块依据赛题图2建模：底径 56 mm、顶径 36 mm、总高 70 mm，底座高 8 mm、上颈高 10 mm，中间为高 52 mm 的锥台；红黄蓝使用同一外形。物块始终参与 Webots 物理碰撞，可能滑落、移位或翻倒。质量暂设 40 g，实物称重后可自行修改。
 
-场地精确几何、挡板、标签和精准放置判据可按正式 DWG 与统一口径更新。面板记录动作与偏差，正式分值以赛事规定为准。轮速接口采用一阶执行器响应。固件模式将PWM占空比折算为电机目标速度，并将实际轮角反馈给MCU，可以练习速度环逻辑；真实电机死区、电气动力学和PID数值仍需实车标定。
+地面纹理和摆位由 `simulator/assets/competition_field.json` 统一生成；该文件保留以毫米绘制的轮廓与布局坐标。实体牌面姿态、挡板厚度与高度、出口判据及精准放置要求以赛事公布为准。轮速接口采用一阶执行器响应。固件模式将 PWM 占空比折算为电机目标速度，并将实际轮角反馈给 MCU，可以练习速度环；真实电机死区、电气动力学和 PID 参数仍需实车标定。
 
 ![赛题图2物块在虚拟摄像头中的外形](docs/images/block.png)
 
