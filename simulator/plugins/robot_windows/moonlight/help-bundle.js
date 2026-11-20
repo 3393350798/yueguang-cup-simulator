@@ -10,7 +10,8 @@ const modes={manual:'手动探索',member:'会员算法',firmware:'STM32 固件'
 const stages={full:'全程',pickup:'识别与抓放',channel:'超声波通道',parking:'终点停车'};
 const colors={red:'红块',yellow:'黄块',blue:'蓝块'};
 const fields=['rules-2000','practice-legacy','custom'];
-const marks={wall_contact:'撞到挡板',block_dropped:'意外掉块',member_error:'会员程序异常',firmware_error:'固件执行异常'};
+const faultMarks={wall_contact:'撞到挡板',block_dropped:'意外掉块',member_error:'会员程序异常',firmware_error:'固件执行异常'};
+const replayMarks={...faultMarks,round_timeout:'达到时限，任务未完成'};
 const verdicts=[
   '会员程序异常','固件执行异常','抓放：未稳定提起','抓放：夹持中掉块','抓放：物块未放入圈内',
   '抓放：放置侧别错误','抓放：放置颜色错误','抓放：未放对圈','通道：未完整通过','通道：碰到挡板',
@@ -26,7 +27,7 @@ function faultSummary(run){
   const sonar=window(run.plan?.sonar), uart=window(run.plan?.uart);
   const action=enumValue(run.plan?.uart?.action,['drop','delay']);
   const delay=integer(run.plan?.uart?.delay_ms,1,3000);
-  const event=enumValue(run.first_event?.kind,Object.keys(marks));
+  const event=enumValue(run.first_event?.kind,Object.keys(faultMarks));
   return {
     sonar:sonar?{...sonar,first_ms:integer(run.sonar_first_ms,0,180000),
       sampled_cycles:integer(run.sonar_samples,0,180000)}:null,
@@ -189,7 +190,7 @@ export function initHelpBundle(config,incidents){
     include.disabled=!clip;
     if(!clip)include.checked=false;
     $('clip-state').textContent=clip?
-      clip.marks.map(mark=>marks[mark.kind]).filter((name,i,all)=>all.indexOf(name)===i).join('、')+' · '+clip.samples.length+' 个采样点'+(clip.partial?' · 提前结束':''):
+      clip.marks.map(mark=>replayMarks[mark.kind]).filter((name,i,all)=>all.indexOf(name)===i).join('、')+' · '+clip.samples.length+' 个采样点'+(clip.partial?' · 提前结束':''):
       '本轮没有可打包的失败片段（未生成、仍在截取或已被淘汰）。';
     $('files').textContent='README.txt、round.json'+(supplement?'、diagnostics-summary.json':'')+
       (include.checked&&clip?'、failure-replay.json':'');

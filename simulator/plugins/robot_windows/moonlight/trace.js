@@ -138,6 +138,29 @@ function uartLines(rows){
   return lines.reverse().join('\n');
 }
 
+function firmwareClip(data, end){
+  const step=data.step_ms, rows=data.samples;
+  if(![4,8,16,32].includes(step))throw new Error('录制周期须为 4、8、16 或 32 ms');
+  const isInput=row=>row?.mode==='firmware'&&[1,2].includes(row.firmware_input);
+  while(end>=0&&!isInput(rows[end]))end--;
+  if(end<0)throw new Error('当前时间之前没有 STM32 实际输入，请先录制 STM32 模式');
+  const time=row=>Math.round(row.t*1000000);
+  let start=end;
+  while(start>0&&(end-start+2)*step<=5000&&isInput(rows[start-1])&&
+        time(rows[start])-time(rows[start-1])===step*1000)start--;
+  const samples=rows.slice(start,end+1).map((row,i)=>{
+    if(!Array.isArray(row.uart_in)||row.uart_in.length>256)
+      throw new Error('片段含大于 256 字节的单周期串口输入，请另选时间点');
+    return {
+      time_ms:i*step,ir:row.ir,encoder_rad:row.encoder,
+      sonar_m:row.firmware_input===2?Object.fromEntries(Object.keys(row.sonar).map(key=>[key,0])):row.sonar,
+      uart_in:row.uart_in
+    };
+  });
+  return {format:'moonlight-firmware-trace',version:1,step_ms:step,
+    source_start_ms:time(rows[start])/1000,samples};
+}
+
 export function initTrace(stepMs,showIncidentFrame){
   const $=id=>document.getElementById('trace-'+id);
   const plotArea=$('plots'),uartDetails=$('uart').parentElement;
@@ -190,6 +213,7 @@ export function initTrace(stepMs,showIncidentFrame){
     if($('record').getAttribute('aria-pressed')!==String(recording))$('record').setAttribute('aria-pressed',String(recording));
     $('record').disabled=Boolean(replay);
     $('export').disabled=!(replay||capture)?.samples.length;
+    $('firmware-export').disabled=Boolean(incident)||!(replay||capture)?.samples.length;
     $('transport').hidden=!replay;
     setText($('play'),frame?'暂停':'播放');
     if(replay){
@@ -229,15 +253,27 @@ export function initTrace(stepMs,showIncidentFrame){
     }
     draw(true);
   };
-  $('export').onclick=()=>{
-    const data=replay||capture;
-    if(!data?.samples.length)return;
+  const download=(data,prefix)=>{
     const url=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'}));
     const link=document.createElement('a');
     link.href=url;
-    link.download=(incident?'moonlight-incident-':'moonlight-trace-')+new Date().toISOString().replace(/[:.]/g,'-')+'.json';
+    link.download=prefix+new Date().toISOString().replace(/[:.]/g,'-')+'.json';
     link.click();
     setTimeout(()=>URL.revokeObjectURL(url),1000);
+  };
+  $('export').onclick=()=>{
+    const data=replay||capture;
+    if(data?.samples.length)download(data,incident?'moonlight-incident-':'moonlight-trace-');
+  };
+  $('firmware-export').onclick=()=>{
+    const data=replay||capture;
+    if(incident||!data?.samples.length)return;
+    try{
+      const clip=firmwareClip(data,replay?index:data.samples.length-1);
+      download(clip,'moonlight-firmware-input-');
+      status='已导出固件输入 · '+clip.samples.length+' 个周期 · 含原始串口字节，请留在本机';
+    }catch(error){status='无法导出固件输入：'+error.message;}
+    draw(true);
   };
   $('import').onclick=()=>$('file').click();
   $('file').onchange=async()=>{

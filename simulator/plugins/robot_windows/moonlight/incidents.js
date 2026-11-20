@@ -1,5 +1,6 @@
 const incidentNames={
-  wall_contact:'撞到挡板',block_dropped:'意外掉块',member_error:'会员程序异常',firmware_error:'固件执行异常'
+  wall_contact:'撞到挡板',block_dropped:'意外掉块',member_error:'会员程序异常',firmware_error:'固件执行异常',
+  round_timeout:'达到时限，任务未完成'
 };
 const stageNames={full:'全程',pickup:'识别与抓放',channel:'超声波通道',parking:'终点停车'};
 const colorNames={red:'红色',yellow:'黄色',blue:'蓝色'};
@@ -115,16 +116,19 @@ export function initIncidents({stepMs,field,open}){
     persist();
     redraw();
   }
+  function addClip(clip){
+    clipEpochs.set(clip,epoch);
+    clips.unshift(clip);clips=clips.slice(0,maxClips);
+    persist();
+    redraw();
+  }
   function begin(mark,meta){
     const samples=recent.map(safeSample).filter(Boolean);
     if(!samples.length)return;
     const clip={format,field,step_ms:stepMs,stage:meta.stage,color:meta.color,
       created:Date.now(),partial:true,marks:[mark],samples};
-    clipEpochs.set(clip,epoch);
-    clips.unshift(clip);clips=clips.slice(0,maxClips);
     active={clip,until:mark.t+afterSeconds};
-    persist();
-    redraw();
+    addClip(clip);
   }
   $('import').onclick=()=>input.click();
   input.onchange=async()=>{
@@ -153,8 +157,19 @@ export function initIncidents({stepMs,field,open}){
       const clip=clips.find(clip=>clip!==active?.clip&&clipEpochs.get(clip)===key);
       if(clip)show(clip);
     },
+    finishTimeout(key,end,elapsed,{stage,color}){
+      if(key===undefined||key!==epoch||!Number.isFinite(end)||!Number.isFinite(elapsed)||elapsed<=0||
+          clips.some(clip=>clipEpochs.get(clip)===key))return;
+      const start=end-beforeSeconds, beforeRun=end-elapsed;
+      const samples=recent.filter(row=>row.t>=start-1e-8&&row.t>beforeRun+1e-8&&row.t<=end).map(safeSample).filter(Boolean);
+      // The last batch may also contain stopped samples after the timed round ended.
+      if(samples.at(-1)?.t!==end)return;
+      addClip({format,field,step_ms:stepMs,stage,color,created:Date.now(),partial:false,
+        marks:[{kind:'round_timeout',t:end}],samples});
+    },
     receive(nextEpoch,batch,meta){
       if(nextEpoch!==epoch){finish();recent=[];epoch=nextEpoch;}
+      const timedEnd=Number.isFinite(meta.timedEnd)?meta.timedEnd:Infinity;
       let oldest=0;
       for(const row of batch||[]){
         if(!Number.isFinite(row.t)||row.t<0||
@@ -167,6 +182,7 @@ export function initIncidents({stepMs,field,open}){
           if(safe&&active.clip.samples.length<maxSamples)active.clip.samples.push(safe);
         }
         for(const kind of row.incidents||[]){
+          if(row.t>timedEnd)break; // A clip already in progress can still finish after the limit.
           if(!Object.hasOwn(incidentNames,kind))continue;
           const mark={kind,t:row.t};
           if(!active){

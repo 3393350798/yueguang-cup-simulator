@@ -127,7 +127,7 @@ function receive(data){
   // Consume every batch even if several arrive before the next browser paint.
   const epoch=data.panel_session?data.panel_session+':'+data.trace_epoch:data.trace_epoch;
   trace.receive(epoch,data.trace);
-  incidents.receive(epoch,data.trace,{stage:data.trial?.stage??'full',color:data.color});
+  incidents.receive(epoch,data.trace,{stage:data.trial?.stage??'full',color:data.color,timedEnd:data.round_result?.trace_end_t});
   trials.receive(data,epoch);
   if(data.image)previewFrame=data.image;
   if(!path.length||Math.hypot(data.pose[0]-path.at(-1)[0],data.pose[1]-path.at(-1)[1])>.006)path.push(data.pose);

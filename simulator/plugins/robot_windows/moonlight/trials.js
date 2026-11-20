@@ -1,4 +1,6 @@
-const {settingsFromPanel,samePlan,compareLatest,faultNotes}=await import('./fault-regression.js'+new URL(import.meta.url).search);
+const query=new URL(import.meta.url).search;
+const [{settingsFromPanel,samePlan,compareLatest,faultNotes},{observedAtStart,readToleranceReport,compareTolerance,showToleranceComparison}]=
+  await Promise.all(['fault-regression','tolerance-compare'].map(name=>import('./'+name+'.js'+query)));
 const names={full:'全程',pickup:'识别与抓放',channel:'超声波通道',parking:'终点停车'};
 const colors={red:'红块',yellow:'黄块',blue:'蓝块'};
 const required=['stage','mode','group','color','elapsed','wall_hits','sonar_triggers','falls'];
@@ -38,17 +40,16 @@ function toleranceMatches(evidence,preset,limit){
 function toleranceSummary(run,rows){
   const cases=run.cases.map(preset=>{
     const row=rows.find(r=>r.suite==='tolerance'&&r.tolerance_run_id===run.id&&r.tolerance_run?.case?.id===preset.id);
-    if(!row)return {preset,status:'unrun',first_unmet_stage:null,first_unmet:null,observed:null};
+    if(!row)return {preset,status:'unrun',first_unmet_stage:null,first_unmet:null,observed:null,scene_signature:null};
     const result=outcome(row), observed=row.tolerance_run.observed;
-    const valid=row.reason==='time'&&observed?.start_pose_mm_deg?.length===3&&
-      observed.block_xy_mm?.length===2&&['intensity','ambientIntensity'].every(k=>Number.isFinite(observed.light?.[k]))&&
-      [...observed.start_pose_mm_deg,...observed.block_xy_mm].every(Number.isFinite);
+    const valid=row.reason==='time'&&observedAtStart(observed);
     const status=valid?(result.stage?'failed':'passed'):'invalid';
     return {preset,status,first_unmet_stage:valid?result.stage:'execution',
-      first_unmet:valid||row.reason==='error'?result.label:'未完整运行或缺少开跑观测',observed};
+      first_unmet:valid||row.reason==='error'?result.label:'未完整运行或缺少开跑观测',
+      observed,scene_signature:row.tolerance_run.scene_signature??null};
   });
   const passed=cases.filter(c=>c.status==='passed').length, valid=cases.filter(c=>['passed','failed'].includes(c.status)).length;
-  return {version:1,run_id:run.id,status:run.status,label:run.label,stage:run.stage,mode:run.mode,
+  return {version:2,run_id:run.id,status:run.status,label:run.label,stage:run.stage,mode:run.mode,
     group:run.group,color:run.color,limit_s:run.limit_s,cases,valid,passed,
     invalid:cases.filter(c=>c.status==='invalid').length,unrun:cases.filter(c=>c.status==='unrun').length,
     pass_rate:valid?passed/valid:null};
@@ -63,6 +64,7 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1){
     return {stage:$('stage').value,group:Number.isSafeInteger(group)&&group>0?group:1,color:value('color')};
   };
   let current,batch,completedEpoch,clipRevision,baseline=[],notice='',matrixSerial=0,toleranceSerial=0,lastTolerance=null;
+  let baselineTolerance=null,toleranceComparison=null;
   const records=[];
   // Report JSON stays separate from replay JSON and browser-only lookup keys.
   const recordEpochs=new WeakMap();
@@ -126,17 +128,22 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1){
     $('summary').textContent=active+(notice?notice+' ':'')
       +(ordinary.length?'当前 '+totals(ordinary):records.length?'容差记录见下表':'尚无记录')
       +(old.length?'；历史 '+totals(old):'');
-    if(lastTolerance){
-      const r=toleranceSummary(lastTolerance,records);
+    const r=lastTolerance?toleranceSummary(lastTolerance,records):null;
+    if(r){
       const pass=r.valid?`${r.passed}/${r.valid}（${(100*r.pass_rate).toFixed(1)}%）`:'—（无有效轮）';
       const status={running:'进行中',complete:'已完成',cancelled:'已停止'}[r.status];
       $('tolerance-summary').textContent=`${status} · 通过 ${pass} · 无效 ${r.invalid} · 未完成 ${r.unrun}`;
     }
+    $('tolerance-comparison').hidden=!baselineTolerance;
+    toleranceComparison=baselineTolerance&&r?compareTolerance(baselineTolerance,r):null;
+    if(baselineTolerance)showToleranceComparison(toleranceComparison,{
+      summary:$('tolerance-comparison-summary'),rows:$('tolerance-comparison-rows')
+    });
     $('export').disabled=!records.length&&!lastTolerance;
   }
   function showRegression(){
-    $('regression').hidden=!baseline.length;
-    if(!baseline.length)return;
+    $('regression').hidden=!baseline.length||(baselineTolerance&&!baseline.some(r=>r.suite==='parity-colors'));
+    if($('regression').hidden)return;
     const result=compareLatest(records,baseline);
     $('regression-summary').textContent=result.message;
     const rows=(result.rows||[]).map(({before,now,oldPassed,newPassed,regressions,improvements})=>{
@@ -211,7 +218,8 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1){
   }
   function record(r,epoch,plan){
     completedEpoch=epoch;
-    const row={...r,label:plan?.label??$('label').value};
+    const {trace_end_t,...result}=r;
+    const row={...result,label:plan?.label??$('label').value};
     if(plan?.kind==='matrix'){
       row.suite='parity-colors';
       row.case_index=plan.index+1;
@@ -226,6 +234,8 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1){
       row.first_unmet=firstUnmet(row);
       row.first_unmet_stage=outcome(row).stage;
     }
+    if(row.reason==='time'&&!current?.round_error&&outcome(row).stage)
+      incidents.finishTimeout(epoch,trace_end_t,row.elapsed,row);
     recordEpochs.set(row,epoch);
     const verdict=current?.round_error?firstUnmet({...row,reason:'error'}):firstUnmet(row);
     supportData.set(row,help.capture(row,current,verdict));
@@ -259,6 +269,7 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1){
   $('export').onclick=()=>{
     const report={format:'moonlight-trials',version:1,records};
     if(lastTolerance)report.tolerance_report=toleranceSummary(lastTolerance,records);
+    if(toleranceComparison)report.tolerance_comparison=toleranceComparison;
     const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));
     const a=document.createElement('a');a.href=url;a.download='moonlight-trials.json';a.click();
     setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -272,7 +283,10 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1){
       if(data.format!=='moonlight-trials'||data.version!==1||!Array.isArray(data.records)||data.records.length>2000||
         data.records.some(r=>!r||required.some(k=>!Object.hasOwn(r,k))||!Number.isFinite(r.elapsed)||!Object.hasOwn(names,r.stage)))
         throw new Error('格式不符');
-      baseline=data.records;notice='';redraw();
+      const tolerance=data.tolerance_report==null?null:readToleranceReport(data.tolerance_report);
+      if(data.tolerance_report!=null&&!tolerance)throw new Error('容差报告格式不符');
+      baseline=data.records;baselineTolerance=tolerance;notice='';redraw();
+      if(tolerance)$('tolerance-comparison').closest('details').open=true;
     }catch(error){notice='无法打开对照报告：'+error.message;updateProgress();}
   };
   return {

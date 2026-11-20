@@ -173,17 +173,18 @@ def encoder_edges(side, index, delta, dt):
 def step(packet):
     global positions, active
     dt = packet['dt']
+    raw_adc = bench and not config.get('normalized_ir', False)
     for role, pin in bindings.items():
         if role.startswith('ir') and role[2:].isdigit():
             index = int(role[2:])
             if index < len(packet['ir']):
                 raw = packet['ir'][index]
-                value = raw / 4095.0 if bench else raw
+                value = raw / 4095.0 if raw_adc else raw
                 input_pin(pin, value >= config['ir_threshold'])
                 # PA0..7 / PB0..1 correspond to ADC channels 0..9.
                 channel = int(pin[2:]) if pin.startswith('PA') and int(pin[2:]) < 8 else int(pin[2:]) + 8 if pin in ('PB0','PB1') else None
                 if channel is not None:
-                    bus.WriteDoubleWord(0x40012480 + channel * 4, int(raw if bench else value * 4095))
+                    bus.WriteDoubleWord(0x40012480 + channel * 4, int(raw if raw_adc else value * 4095))
     for sonar in sonars:
         sonar.distance = packet['sonar'].get(sonar.name, 0.0)
     current = [int(round(packet['encoder'][side] * config['encoder_cpr'] / (2 * math.pi))) for side in ('left','right')]

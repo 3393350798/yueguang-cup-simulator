@@ -1,7 +1,7 @@
 """Webots 场景桥接与练习面板。会员算法在 member_algorithm.py。"""
 from pathlib import Path
 import base64
-from hashlib import sha256
+from hashlib import file_digest, sha256
 import importlib.util
 import json
 import math
@@ -10,6 +10,7 @@ import sys
 import time
 import traceback
 from uuid import uuid4
+import xml.etree.ElementTree as ET
 from runtime_log import CHOICES, RuntimeLog, choice, project_version
 
 ROOT=Path(__file__).resolve().parents[2]
@@ -213,6 +214,42 @@ def scene_signature(firmware_config=None, firmware_board=None):
 member_scene_signature=scene_signature()
 
 
+def tolerance_assets():
+    # Scene parameters alone do not detect a replaced mesh at the same path.
+    paths={'worlds/moonlight.wbt', 'worlds/textures/track.png',
+           'worlds/textures/tag0.png', 'worlds/textures/tag1.png'}
+    if source:=MODEL.get('source'):
+        paths.add(source)
+        if IMPORTED:
+            urdf=ROOT/source
+            for mesh in ET.parse(urdf).iter('mesh'):
+                paths.add((Path(source).parent/mesh.attrib['filename']).as_posix())
+    if source:=(CONFIG.get('board',{}).get('model') or {}).get('source'):
+        paths.add(source)
+    hashes={}
+    for name in sorted(paths):
+        path=(ROOT/name).resolve()
+        if not path.is_relative_to(ROOT):
+            raise ValueError('场景资源不在工程目录内。')
+        with path.open('rb') as asset:
+            hashes[name]=file_digest(asset,'sha256').hexdigest()
+    return hashes
+
+
+try:
+    tolerance_scene_assets=tolerance_assets()
+except (OSError, ValueError, KeyError, ET.ParseError):
+    tolerance_scene_assets=None
+
+
+def tolerance_signature(settings=None,board=None):
+    if tolerance_scene_assets is None:
+        return None
+    setup=json.dumps([scene_signature(settings,board),tolerance_scene_assets],
+                     sort_keys=True,ensure_ascii=True,separators=(',',':'))
+    return sha256(setup.encode('ascii')).hexdigest()
+
+
 def round_elapsed_ms():
     return round(state['elapsed']*1000)
 
@@ -345,7 +382,8 @@ def reset(group=None,color=None,stage=None,limit=None,fault_plan=None,tolerance_
     close_firmware('reset')
     if round_tolerance is not None or case is not None:
         set_practice_light(case['light_scale'] if case is not None else 1)
-    round_tolerance=None if case is None else dict(version=1,case=case,limit_s=limit,observed=None)
+    round_tolerance=None if case is None else dict(version=1,case=case,limit_s=limit,observed=None,
+        scene_signature=tolerance_signature() if state['mode']=='member' else None)
     effects=Imperfections(HW.get('imperfections',{}))
     trace_epoch+=1
     trace_start=sim.getTime()
@@ -398,6 +436,8 @@ def finish_round(reason):
     state['running']=False
     manual[:]=[0,0]
     round_result=dict(trial_report(pose()),id=round_id,reason=reason)
+    if reason=='time':
+        round_result['trace_end_t']=round(sim.getTime()-trace_start,6)
     if round_tolerance is not None:
         set_practice_light(1)
     log('本轮结果已记录')
@@ -425,12 +465,15 @@ def receive(message):
         if state['mode']=='firmware' and firmware is None:
             diagnostics.phase='firmware_start'
             record('firmware_start_requested')
-            if round_faults:
+            if round_faults or round_tolerance is not None:
                 # Hash the exact runtime setup passed to Renode, including live
                 # edits made after the Webots scene was generated.
                 settings=json.loads((ROOT/'firmware.json').read_text(encoding='utf-8-sig'))
                 board=json.loads((ROOT/'board.json').read_text(encoding='utf-8-sig'))
-                round_faults.signature=scene_signature(settings,board)
+                if round_faults:
+                    round_faults.signature=scene_signature(settings,board)
+                else:
+                    round_tolerance['scene_signature']=tolerance_signature(settings,board)
                 firmware=FirmwareBridge(settings,board)
             else:
                 firmware=FirmwareBridge()
@@ -601,6 +644,7 @@ while sim.step(STEP)!=-1:
         sensors['sonar_no_echo']=True
     command=dict(left=0,right=0)
     pwm,uart_in,uart_out=None,[],[]
+    firmware_input=0
     if state['running']:
         cycle_start=state['elapsed']
         state['elapsed']+=DT
@@ -622,6 +666,9 @@ while sim.step(STEP)!=-1:
                 # reserved here for no pulse; the Python/UI view stays at max range.
                 firmware_sensors=dict(sensors,sonar={key:0 for key in sensors['sonar']}) if sonar_fault else sensors
                 firmware_status=firmware.step(firmware_sensors,DT,uart_data)
+                # The panel trace shows max range for a fault. Preserve the
+                # different value delivered to the firmware without duplicating sensors.
+                firmware_input=2 if sonar_fault else 1
                 firmware_status['uart_dropped']=effects.dropped
                 pwm=[firmware_status[side] for side in ('left','right')]
                 uart_out=firmware_status['uart']
@@ -696,6 +743,8 @@ while sim.step(STEP)!=-1:
                 pwm=pwm, speed=wheel_speed, encoder=current_encoder, ir=sensors['ir'],
                 sonar=sensors['sonar'], uart_in=uart_in, uart_out=uart_out, pose=p,
                 grip=grasp, block_position=block_pose)
+    if firmware_input:
+        sample['firmware_input']=firmware_input
     if incident_flags:
         sample['incidents']=sorted(incident_flags)
         incident_flags.clear()

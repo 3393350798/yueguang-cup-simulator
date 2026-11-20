@@ -55,7 +55,7 @@ def find_renode(setting=''):
 
 
 class FirmwareBridge:
-    def __init__(self, config=None, board=None, *, bench=False):
+    def __init__(self, config=None, board=None, *, bench=False, normalized_ir=False):
         self.config = config if config is not None else json.loads((ROOT/'firmware.json').read_text(encoding='utf-8-sig'))
         board = board if board is not None else json.loads((ROOT/'board.json').read_text(encoding='utf-8-sig'))
         image = self.config.get('image')
@@ -80,12 +80,12 @@ class FirmwareBridge:
         self.lift = None
         atexit.register(self.close)
         try:
-            self._launch(image, executable, bindings, bench)
+            self._launch(image, executable, bindings, bench, normalized_ir)
         except BaseException:
             self.close()
             raise
 
-    def _launch(self, image, executable, bindings, bench):
+    def _launch(self, image, executable, bindings, bench, normalized_ir):
         for path in (ROOT/'tools/firmware').glob('*.*'):
             shutil.copyfile(path, self.folder/path.name)
         platform = (self.folder/'f103.repl').read_text(encoding='utf-8')
@@ -94,7 +94,8 @@ class FirmwareBridge:
         (self.folder/'f103.repl').write_text(platform, encoding='utf-8')
         suffix = image.suffix.lower()
         shutil.copyfile(image, self.folder/('member'+suffix))
-        (self.folder/'session.json').write_text(json.dumps(dict(self.config, bindings=bindings, bench=bench)), encoding='utf-8')
+        session = dict(self.config, bindings=bindings, bench=bench, normalized_ir=normalized_ir)
+        (self.folder/'session.json').write_text(json.dumps(session), encoding='utf-8')
         load = {'.elf':'LoadELF', '.axf':'LoadELF', '.hex':'LoadHEX', '.bin':'LoadBinary'}[suffix]
         lines = ['include @MoonlightSTM32Timer.cs', 'include @MoonlightSTM32ADC.cs',
                  'include @MoonlightSTM32USART.cs', 'mach create',

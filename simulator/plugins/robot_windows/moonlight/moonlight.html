@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>月光杯 · 仿真练习台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="moonlight.css?v=tolerance"><link rel="stylesheet" href="trace.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>月光杯 · 仿真练习台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="moonlight.css?v=tolerance-compare"><link rel="stylesheet" href="trace.css"></head>
 <body>
 <header><div><span class="eyebrow">MOONLIGHT / ROBOTICS LAB</span><h1>月光杯<span>仿真练习台</span></h1></div><span id="connection" class="badge" role="status">连接场景中</span></header>
 <main>
@@ -19,7 +19,7 @@
     <div class="task-grid"><div><span>指定位置</span><strong id="target">左侧 · 红色</strong></div><div><span>抓取</span><strong id="grasp">等待</strong></div><div><span>放置结果</span><strong id="placed">等待</strong></div><div><span>终点停车</span><strong id="parking">等待</strong></div></div>
     <details><summary>运行事件</summary><ol id="events"></ol></details>
     <details class="incident-panel"><summary>失败回放 <span id="incident-count" class="mini"></span></summary>
-      <p>面板连接时，自动保留最近 4 段碰撞、意外掉块和程序异常。点击片段可定位到故障。</p>
+      <p>面板连接时，自动保留最近 4 段失败回放，包括碰撞、意外掉块、程序异常，以及达到时限但任务未完成的轮次。点击片段可定位到对应时刻。</p>
       <ol id="incident-items"></ol><p id="incident-status" role="status"></p>
       <button id="incident-import" class="small">打开失败片段</button>
       <input id="incident-file" type="file" accept=".json,application/json" hidden>
@@ -58,8 +58,14 @@
         <details class="fault-plan">
           <summary>赛场容差回归</summary>
           <p>同一组号、颜色和赛段，依次测试基准、车体横移、物块摆偏及灯光变化。通道和停车不测物块。预设仅供仿真练习，尚未现场测定。</p>
+          <p>先导出旧方案，再通过「对照历史」载入，即可逐项比较。</p>
           <button id="trial-tolerance">开始容差练习</button>
           <p id="trial-tolerance-summary" role="status"></p>
+          <div id="trial-tolerance-comparison" class="trial-regression" hidden>
+            <p><strong>容差工况对照</strong></p>
+            <p id="trial-tolerance-comparison-summary" role="status"></p>
+            <div class="trial-scroll" tabindex="0" role="region" aria-label="可滚动的容差工况对照"><table aria-label="容差工况对照"><thead><tr><th>容差预设</th><th>历史</th><th>当前</th><th>变化</th></tr></thead><tbody id="trial-tolerance-comparison-rows"></tbody></table></div>
+          </div>
         </details>
         <p id="trial-summary" role="status">尚无记录</p>
         <div id="trial-regression" class="trial-regression" hidden>
@@ -76,6 +82,7 @@
         <select id="trace-group"><option value="drive">驱动 · PWM / 轮速 / 编码器</option><option value="environment">环境 · 红外 / 超声波</option><option value="incident" hidden>失败回放 · PWM / 超声波</option></select>
         <button id="trace-record" aria-pressed="false">开始录制</button>
         <button id="trace-export" disabled>导出 JSON</button>
+        <button id="trace-firmware-export" disabled>导出固件输入片段</button>
         <button id="trace-import">打开录制</button>
         <input id="trace-file" type="file" accept=".json,application/json" hidden>
       </div>
