@@ -5,30 +5,56 @@ const required=['stage','mode','group','color','elapsed','wall_hits','sonar_trig
 const uses=(round,stage)=>round.stage==='full'||round.stage===stage;
 const scenario=r=>(r.group%2===0?'偶数组':'奇数组')+' · '+(colors[r.color]||'未记录颜色');
 
-function firstUnmet(r){
-  if(r.reason==='error')return r.mode==='firmware'?'固件执行异常':'会员程序异常';
+function outcome(r){
+  const fail=(stage,label)=>({stage,label});
+  if(r.reason==='error')return fail('execution',r.mode==='firmware'?'固件执行异常':'会员程序异常');
   if(uses(r,'pickup')){
-    if(!r.grasped)return '抓放：未稳定提起';
-    if(r.falls>0)return '抓放：夹持中掉块';
-    if(!r.placed)return '抓放：物块未放入圈内';
+    if(!r.grasped)return fail('pickup','抓放：未稳定提起');
+    if(r.falls>0)return fail('pickup','抓放：夹持中掉块');
+    if(!r.placed)return fail('pickup','抓放：物块未放入圈内');
     if(!r.placed.correct){
-      if(r.placed.side!==(r.group%2===0?'left':'right'))return '抓放：放置侧别错误';
-      if(r.placed.color!==r.color)return '抓放：放置颜色错误';
-      return '抓放：未放对圈';
+      if(r.placed.side!==(r.group%2===0?'left':'right'))return fail('pickup','抓放：放置侧别错误');
+      if(r.placed.color!==r.color)return fail('pickup','抓放：放置颜色错误');
+      return fail('pickup','抓放：未放对圈');
     }
   }
   if(uses(r,'channel')){
-    if(!r.crossed)return '通道：未完整通过';
-    if(r.wall_hits>0)return '通道：碰到挡板';
+    if(!r.crossed)return fail('channel','通道：未完整通过');
+    if(r.wall_hits>0)return fail('channel','通道：碰到挡板');
   }
   if(uses(r,'parking')){
-    if(!r.parked)return '停车：未停稳';
-    if(!r.aligned)return '停车：未摆正';
+    if(!r.parked)return fail('parking','停车：未停稳');
+    if(!r.aligned)return fail('parking','停车：未摆正');
   }
-  return '适用检查均通过';
+  return {stage:null,label:'适用检查均通过'};
+}
+const firstUnmet=r=>outcome(r).label;
+
+function toleranceMatches(evidence,preset,limit){
+  return evidence?.version===1&&evidence.limit_s===limit&&
+    Object.keys(preset).every(k=>evidence.case?.[k]===preset[k]);
 }
 
-export function initTrials(send,incidents,help){
+function toleranceSummary(run,rows){
+  const cases=run.cases.map(preset=>{
+    const row=rows.find(r=>r.suite==='tolerance'&&r.tolerance_run_id===run.id&&r.tolerance_run?.case?.id===preset.id);
+    if(!row)return {preset,status:'unrun',first_unmet_stage:null,first_unmet:null,observed:null};
+    const result=outcome(row), observed=row.tolerance_run.observed;
+    const valid=row.reason==='time'&&observed?.start_pose_mm_deg?.length===3&&
+      observed.block_xy_mm?.length===2&&['intensity','ambientIntensity'].every(k=>Number.isFinite(observed.light?.[k]))&&
+      [...observed.start_pose_mm_deg,...observed.block_xy_mm].every(Number.isFinite);
+    const status=valid?(result.stage?'failed':'passed'):'invalid';
+    return {preset,status,first_unmet_stage:valid?result.stage:'execution',
+      first_unmet:valid||row.reason==='error'?result.label:'未完整运行或缺少开跑观测',observed};
+  });
+  const passed=cases.filter(c=>c.status==='passed').length, valid=cases.filter(c=>['passed','failed'].includes(c.status)).length;
+  return {version:1,run_id:run.id,status:run.status,label:run.label,stage:run.stage,mode:run.mode,
+    group:run.group,color:run.color,limit_s:run.limit_s,cases,valid,passed,
+    invalid:cases.filter(c=>c.status==='invalid').length,unrun:cases.filter(c=>c.status==='unrun').length,
+    pass_rate:valid?passed/valid:null};
+}
+
+export function initTrials(send,incidents,help,presets=[],lightGain=1){
   const $=id=>document.getElementById('trial-'+id);
   const value=id=>document.getElementById(id).value;
   const field=(id,min,max)=>Math.max(min,Math.min(max,Math.round(Number($(id).value))||min));
@@ -36,14 +62,15 @@ export function initTrials(send,incidents,help){
     const group=Math.round(Number(value('group')));
     return {stage:$('stage').value,group:Number.isSafeInteger(group)&&group>0?group:1,color:value('color')};
   };
-  let current,batch,completedEpoch,clipRevision,baseline=[],notice='',matrixSerial=0;
+  let current,batch,completedEpoch,clipRevision,baseline=[],notice='',matrixSerial=0,toleranceSerial=0,lastTolerance=null;
   const records=[];
   // Report JSON stays separate from replay JSON and browser-only lookup keys.
   const recordEpochs=new WeakMap();
   const supportData=new WeakMap();
   const add=r=>{
     const tr=document.createElement('tr');
-    const condition=Number.isInteger(r.case_index)?' · 工况 '+r.case_index+'/6':'';
+    const condition=r.suite==='tolerance'?' · 容差：'+(r.tolerance_run?.case?.label||'未记录')
+      :Number.isInteger(r.case_index)?' · 工况 '+r.case_index+'/6':'';
     const items=[(r.label||'历史')+' · '+names[r.stage]+' · '+scenario(r)+condition,
       firstUnmet(r),
       uses(r,'pickup')?(r.grasped?'提起':'未提起')+(r.placed?.correct?'／放对圈 '+r.placed.offset_mm+' mm':r.placed?'／其他圈':'')+'／掉落 '+r.falls:'—',
@@ -53,6 +80,10 @@ export function initTrials(send,incidents,help){
     for(const item of items){const td=document.createElement('td');td.textContent=item;tr.append(td);}
     for(const message of faultNotes(r)){
       const note=document.createElement('small');note.className='fault-round-note';note.textContent=message;
+      tr.cells[1].append(note);
+    }
+    if(r.suite==='tolerance'&&r.reason!=='time'){
+      const note=document.createElement('small');note.className='fault-round-note';note.textContent='无效轮，不计入容差通过率';
       tr.cells[1].append(note);
     }
     const key=recordEpochs.get(r);
@@ -81,16 +112,27 @@ export function initTrials(send,incidents,help){
       +' · 停稳摆正 '+rates(r=>uses(r,'parking'),r=>r.aligned);
   }
   function updateProgress(){
-    const active=batch?((batch.kind==='matrix'?'固定工况':'重复同一工况')+
-      ' · 已记录 '+batch.index+' / '+batch.cases.length+' · 正在测试 '+scenario(batch.cases[batch.index])+'。 '):'';
+    const labels={matrix:'固定工况',repeat:'重复同一工况',tolerance:'容差练习'};
+    const active=batch?labels[batch.kind]+' · 已记录 '+batch.index+' / '+batch.cases.length+
+      ' · 正在测试 '+(batch.kind==='tolerance'?lastTolerance.cases[batch.index].label:scenario(batch.cases[batch.index]))+'。 ':'';
     $('batch').textContent=batch?.kind==='repeat'?'停止多轮':'开始多轮';
     $('matrix').textContent=batch?.kind==='matrix'?'停止固定工况':'固定工况（6 轮）';
-    $('batch').disabled=batch?.kind==='matrix';
-    $('matrix').disabled=batch?.kind==='repeat';
+    $('tolerance').textContent=batch?.kind==='tolerance'?'停止容差练习':'开始容差练习';
+    $('batch').disabled=Boolean(batch&&batch.kind!=='repeat');
+    $('matrix').disabled=Boolean(batch&&batch.kind!=='matrix');
+    $('tolerance').disabled=Boolean(batch&&batch.kind!=='tolerance');
     $('finish').disabled=Boolean(batch||!current?.trial||current.round_result||current.resetting);
+    const ordinary=records.filter(r=>r.suite!=='tolerance'), old=baseline.filter(r=>r.suite!=='tolerance');
     $('summary').textContent=active+(notice?notice+' ':'')
-      +(records.length?'当前 '+totals(records):'尚无记录')
-      +(baseline.length?'；历史 '+totals(baseline):'');
+      +(ordinary.length?'当前 '+totals(ordinary):records.length?'容差记录见下表':'尚无记录')
+      +(old.length?'；历史 '+totals(old):'');
+    if(lastTolerance){
+      const r=toleranceSummary(lastTolerance,records);
+      const pass=r.valid?`${r.passed}/${r.valid}（${(100*r.pass_rate).toFixed(1)}%）`:'—（无有效轮）';
+      const status={running:'进行中',complete:'已完成',cancelled:'已停止'}[r.status];
+      $('tolerance-summary').textContent=`${status} · 通过 ${pass} · 无效 ${r.invalid} · 未完成 ${r.unrun}`;
+    }
+    $('export').disabled=!records.length&&!lastTolerance;
   }
   function showRegression(){
     $('regression').hidden=!baseline.length;
@@ -117,14 +159,17 @@ export function initTrials(send,incidents,help){
   function redraw(){
     clipRevision=incidents.revision;
     $('rows').replaceChildren(...[...records,...baseline].map(add));
-    $('export').disabled=!records.length;
     showRegression();
     updateProgress();
   }
   function abort(message,pause=false){
+    const ending=batch;
     batch=null;
     notice=message;
-    if(pause)send('pause');
+    if(ending?.kind==='tolerance'){
+      lastTolerance.status='cancelled';
+      if(pause)send('end_tolerance',{round_id:ending.expected});
+    }else if(pause)send('pause');
     updateProgress();
   }
   function position(){
@@ -138,10 +183,11 @@ export function initTrials(send,incidents,help){
     send('reset',batch.cases[batch.index]);
   }
   function startBatch(kind){
-    if(batch){abort('多轮已停止；已完成的记录可以导出。',true);return;}
+    if(batch){abort(batch.kind==='tolerance'?'容差练习已停止；已完成的记录可以导出。':'多轮已停止；已完成的记录可以导出。',true);return;}
     if(!current?.trial)notice='请先连接场景。';
     else if(current.mode!==value('mode'))notice='控制方式正在切换，请稍后开始。';
     else if(current.mode==='manual')notice='请先选择「会员算法」或「STM32 固件」。';
+    else if(kind==='tolerance'&&(!presets.length||!lightGain))notice='容差练习需要当前版场景和非零灯光，请检查配置并重新启动。';
     else notice='';
     if(notice){updateProgress();return;}
     const plan={...settings(),limit:field('limit',1,180)};
@@ -149,8 +195,14 @@ export function initTrials(send,incidents,help){
       try{plan.fault_plan=settingsFromPanel($,plan.limit,current.mode,Object.keys(current.sensors?.sonar||{}).length>0);}
       catch(error){notice=error.message;updateProgress();return;}
     }
-    const cases=kind==='matrix'?[2,1].flatMap(group=>Object.keys(colors).map(color=>({...plan,group,color})))
-      :Array.from({length:field('count',1,20)},()=>plan);
+    let cases;
+    if(kind==='tolerance'){
+      const selected=presets.filter(c=>uses(plan,'pickup')||!c.block_y_mm);
+      lastTolerance={id:++toleranceSerial,status:'running',label:$('label').value,stage:plan.stage,mode:current.mode,
+        group:plan.group,color:plan.color,limit_s:plan.limit,cases:selected};
+      cases=selected.map(c=>({...plan,tolerance_id:c.id}));
+    }else if(kind==='matrix')cases=[2,1].flatMap(group=>Object.keys(colors).map(color=>({...plan,group,color})));
+    else cases=Array.from({length:field('count',1,20)},()=>plan);
     batch={kind,index:0,cases,label:$('label').value,mode:current.mode,session:current.panel_session,
       matrixSerial:kind==='matrix'?++matrixSerial:null};
     notice='';
@@ -166,6 +218,13 @@ export function initTrials(send,incidents,help){
       row.limit_s=plan.cases[plan.index].limit;
       row.matrix_run=plan.matrixSerial;
       row.first_unmet=firstUnmet(row);
+    }else if(plan?.kind==='tolerance'){
+      row.suite='tolerance';
+      row.tolerance_run_id=lastTolerance.id;
+      row.tolerance_index=plan.index+1;
+      row.limit_s=plan.cases[plan.index].limit;
+      row.first_unmet=firstUnmet(row);
+      row.first_unmet_stage=outcome(row).stage;
     }
     recordEpochs.set(row,epoch);
     const verdict=current?.round_error?firstUnmet({...row,reason:'error'}):firstUnmet(row);
@@ -176,7 +235,11 @@ export function initTrials(send,incidents,help){
     record(r,epoch,batch);
     if(++batch.index<batch.cases.length)resetCase(state);
     else{
-      notice=batch.kind==='matrix'?'固定工况已完成（6 轮）。':'多轮已完成。';
+      if(batch.kind==='tolerance'){
+        notice='容差练习已结束，恢复常规摆位。';
+        lastTolerance.status='complete';
+        send('end_tolerance',{round_id:batch.expected});
+      }else notice=batch.kind==='matrix'?'固定工况已完成（6 轮）。':'多轮已完成。';
       batch=null;
     }
     redraw();
@@ -185,6 +248,7 @@ export function initTrials(send,incidents,help){
   $('finish').onclick=()=>send('finish_round');
   $('batch').onclick=()=>startBatch('repeat');
   $('matrix').onclick=()=>startBatch('matrix');
+  $('tolerance').onclick=()=>startBatch('tolerance');
   function syncFaultInputs(){
     for(const id of ['sonar-start','sonar-length'])$(id).disabled=!$('fault-sonar').checked;
     for(const id of ['uart-start','uart-length'])$(id).disabled=!$('fault-uart').value;
@@ -193,7 +257,9 @@ export function initTrials(send,incidents,help){
   $('fault-sonar').onchange=$('fault-uart').onchange=syncFaultInputs;
   syncFaultInputs();
   $('export').onclick=()=>{
-    const url=URL.createObjectURL(new Blob([JSON.stringify({format:'moonlight-trials',version:1,records},null,2)],{type:'application/json'}));
+    const report={format:'moonlight-trials',version:1,records};
+    if(lastTolerance)report.tolerance_report=toleranceSummary(lastTolerance,records);
+    const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));
     const a=document.createElement('a');a.href=url;a.download='moonlight-trials.json';a.click();
     setTimeout(()=>URL.revokeObjectURL(url),1000);
   };
@@ -211,7 +277,7 @@ export function initTrials(send,incidents,help){
   };
   return {
     pause(){
-      if(batch)abort('多轮已暂停；已完成的记录可以导出。',true);
+      if(batch)abort(batch.kind==='tolerance'?'容差练习已停止；已完成的记录可以导出。':'多轮已暂停；已完成的记录可以导出。',true);
       else send('pause');
     },
     receive(state,epoch){
@@ -223,7 +289,7 @@ export function initTrials(send,incidents,help){
       if($('finish').disabled!==disabled)$('finish').disabled=disabled;
       if(clipRevision!==incidents.revision)redraw();
       if(!batch){
-        if(state.round_result&&epoch!==completedEpoch){record(state.round_result,epoch);redraw();}
+        if(state.round_result&&!state.round_result.tolerance_run&&epoch!==completedEpoch){record(state.round_result,epoch);redraw();}
         return;
       }
       if(state.mode!==batch.mode||state.panel_session!==batch.session){abort('运行环境已切换，多轮已停止。');return;}
@@ -235,8 +301,11 @@ export function initTrials(send,incidents,help){
       if(batch.kind==='matrix'&&!samePlan(state.trial.fault_run?.plan,plan.fault_plan,plan.limit,batch.mode)){
         abort('场景未确认本轮定时故障设置，固定工况已停止。',true);return;
       }
+      if(batch.kind==='tolerance'&&!toleranceMatches(state.trial.tolerance_run,lastTolerance.cases[batch.index],plan.limit)){
+        abort('场景未确认本轮容差工况，已停止。',true);return;
+      }
       if(state.round_error){
-        if(batch.kind==='matrix'){
+        if(batch.kind==='matrix'||batch.kind==='tolerance'){
           if(epoch!==completedEpoch)finishCase({...state.trial,reason:'error'},state,epoch);
         }else abort('多轮已停止：'+state.round_error);
         return;

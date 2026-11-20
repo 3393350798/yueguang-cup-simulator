@@ -23,10 +23,10 @@ def starting_pose(config, stage):
 
 
 class StageTrial:
-    def __init__(self, stage, config):
+    def __init__(self, stage, config, start=None):
         self.stage = stage
         self.config = config
-        self.start = starting_pose(config,stage)
+        self.start = starting_pose(config,stage) if start is None else start
         self.crossed = False
         self.entered = False
         self.previous_x = self.start[0]

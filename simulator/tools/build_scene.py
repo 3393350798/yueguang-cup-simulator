@@ -57,6 +57,18 @@ channel = [field_point(point) for point in layout['channel']]
 # The walls follow the full centerlines of the two long sides of the printed frame.
 walls = [[channel_left,y,channel_right,y] for y in (channel_top,channel_bottom)]
 
+# Published practice-only offsets. Publish the same table to the controller
+# and panel so a plan is selected by ID instead of taking arbitrary offsets.
+tolerance_cases = [
+    dict(id='nominal', label='基准摆位', lateral_mm=0, block_y_mm=0, light_scale=1),
+    dict(id='start-left', label='起步左偏 10 mm', lateral_mm=10, block_y_mm=0, light_scale=1),
+    dict(id='start-right', label='起步右偏 10 mm', lateral_mm=-10, block_y_mm=0, light_scale=1),
+    dict(id='block-up', label='物块场地 Y +8 mm', lateral_mm=0, block_y_mm=8, light_scale=1),
+    dict(id='block-down', label='物块场地 Y −8 mm', lateral_mm=0, block_y_mm=-8, light_scale=1),
+    dict(id='light-dim', label='灯光 ×0.75', lateral_mm=0, block_y_mm=0, light_scale=.75),
+    dict(id='light-bright', label='灯光 ×1.25', lateral_mm=0, block_y_mm=0, light_scale=1.25),
+]
+
 config = dict(step_ms=step_ms, physics_step_ms=physics_step_ms,
               field_revision='rules-2000', floor_size=SIZE, line_width=layout['line_width']/1000,
               wheel_radius=radius, axle_length=track, body_size=[length,max(width,track+wheel_width)],
@@ -71,7 +83,7 @@ config = dict(step_ms=step_ms, physics_step_ms=physics_step_ms,
               channel=channel, walls=walls,
               wall_thickness=.012, wall_height=.14,
               tag_family='tag36h11', tag_size=0.08,
-              block=block_spec,
+              block=block_spec, tolerance_cases=tolerance_cases,
               geometry_note='2000 × 2000 mm 赛规定尺版；挡板沿超声波区黑框长边全长布置')
 (ROOT/'scene.json').write_text(json.dumps(config,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
 
@@ -126,7 +138,7 @@ WorldInfo {
 }
 Viewpoint { orientation -0.57735027 0.57735027 0.57735027 2.0943951 position 0 0 6.1 fieldOfView 0.7 }
 Background { skyColor [ 0.91 0.94 0.97 ] }
-DirectionalLight { direction -0.3 -0.4 -1 intensity LIGHT_INTENSITY ambientIntensity LIGHT_AMBIENT castShadows TRUE }
+DEF PRACTICE_LIGHT DirectionalLight { direction -0.3 -0.4 -1 intensity LIGHT_INTENSITY ambientIntensity LIGHT_AMBIENT castShadows TRUE }
 DEF FLOOR Solid {
   translation 0 0 FLOOR_Z
   children [ Shape { appearance PBRAppearance {

@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>月光杯 · 仿真练习台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="moonlight.css?v=fault-regression"><link rel="stylesheet" href="trace.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>月光杯 · 仿真练习台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="moonlight.css?v=tolerance"><link rel="stylesheet" href="trace.css"></head>
 <body>
 <header><div><span class="eyebrow">MOONLIGHT / ROBOTICS LAB</span><h1>月光杯<span>仿真练习台</span></h1></div><span id="connection" class="badge" role="status">连接场景中</span></header>
 <main>
@@ -54,6 +54,12 @@
             <label>追加毫秒 <input id="trial-uart-delay" type="number" min="1" max="3000" value="150" disabled></label>
           </div>
           <p>UART 只模拟发往虚拟 STM32 的输入，需要固件模式。不会访问真实串口。</p>
+        </details>
+        <details class="fault-plan">
+          <summary>赛场容差回归</summary>
+          <p>同一组号、颜色和赛段，依次测试基准、车体横移、物块摆偏及灯光变化。通道和停车不测物块。预设仅供仿真练习，尚未现场测定。</p>
+          <button id="trial-tolerance">开始容差练习</button>
+          <p id="trial-tolerance-summary" role="status"></p>
         </details>
         <p id="trial-summary" role="status">尚无记录</p>
         <div id="trial-regression" class="trial-regression" hidden>

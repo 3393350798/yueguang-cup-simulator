@@ -76,7 +76,8 @@ function send(command,extra={}){
   if(socket?.readyState===1)socket.send(`robot:${robotName}:${payload}`);
   else pending.push(payload);
 }
-const trials=initTrials(send,incidents,initHelpBundle(config,incidents));
+const trials=initTrials(send,incidents,initHelpBundle(config,incidents),
+  config.tolerance_cases??[],config.robot?.imperfections?.light_gain??1);
 function connectionStatus(message, warning=false){
   const badge=$('connection');
   if(badge.textContent!==message)badge.textContent=message;

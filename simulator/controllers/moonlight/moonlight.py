@@ -33,7 +33,7 @@ from firmware_bridge import FirmwareBridge, diagnostic_reason
 from imperfections import Imperfections
 from vision_link import VisionLink
 from physical_gripper import PhysicalGripper
-from stage_trial import StageTrial, STAGES
+from stage_trial import StageTrial, STAGES, starting_pose
 from timed_faults import RoundFaults, parse_plan
 diagnostics.phase='scene_config'
 CONFIG=json.loads((ROOT/'scene.json').read_text(encoding='utf-8'))
@@ -77,6 +77,9 @@ diagnostics.phase='webots_setup'
 sim=Supervisor()
 car=sim.getSelf()
 block=sim.getFromDef('BLOCK')
+light=sim.getFromDef('PRACTICE_LIGHT')
+light_fields={name:light.getField(name) for name in ('intensity','ambientIntensity')} if light else {}
+baseline_light={name:field.getSFFloat() for name,field in light_fields.items()}
 finish_half_size=[side/2 for side in CONFIG.get('finish_inner_size',[.205,.205])]
 channel_tl,channel_br=CONFIG['channel']
 wall_half_width=CONFIG.get('wall_thickness',.012)/2
@@ -117,6 +120,7 @@ ready_at=0
 round_limit=None
 round_error=None
 round_faults=None
+round_tolerance=None
 
 state=dict(mode='manual',running=False,group=2,color='red',carrying=False,
            elapsed=0.0,collision=False,grasped=False,placed=None,parked=False,aligned=False,
@@ -217,6 +221,8 @@ def trial_report(position):
     report=trial.report(state,position)
     if round_faults:
         report['fault_run']=round_faults.report()
+    if round_tolerance is not None:
+        report['tolerance_run']=round_tolerance.copy()
     return report
 
 
@@ -301,13 +307,45 @@ def close_firmware(reason):
     firmware=None;firmware_status={}
 
 
-def reset(group=None,color=None,stage=None,limit=None,fault_plan=None):
+def tolerance_case(key,stage,limit,fault_plan):
+    if key is None:
+        return None
+    if (fault_plan is not None or state['mode'] not in ('member','firmware') or
+            type(limit) is not int or not 1<=limit<=180):
+        raise ValueError('容差练习需要程序模式、指定用时，且不与定时故障叠加。')
+    if not baseline_light or not any(baseline_light.values()):
+        raise ValueError('容差练习需要启用赛场灯光；请重新生成场景并核对灯光配置。')
+    for case in CONFIG.get('tolerance_cases',[]):
+        if case['id']==key and (stage in ('full','pickup') or not case['block_y_mm']):
+            return case
+    raise ValueError('当前赛段不支持此容差工况。')
+
+
+def set_practice_light(scale):
+    for name,field in light_fields.items():
+        level=baseline_light[name]*scale
+        field.setSFFloat(min(1,level) if name=='ambientIntensity' else level)
+
+
+def observe_tolerance_start():
+    x,y,yaw=pose()
+    return dict(start_pose_mm_deg=[round(x*1000,2),round(y*1000,2),round(math.degrees(yaw),2)],
+                block_xy_mm=[round(v*1000,2) for v in block.getPosition()[:2]],
+                light={name:round(field.getSFFloat(),5) for name,field in light_fields.items()})
+
+
+def reset(group=None,color=None,stage=None,limit=None,fault_plan=None,tolerance_id=None):
     global still,last_encoder,algorithm,effects
     global trace_epoch,trace_start
-    global trial,round_id,round_result,ready_at,last_collision_time,round_limit,round_error,round_faults
+    global trial,round_id,round_result,ready_at,last_collision_time,round_limit,round_error,round_faults,round_tolerance
     diagnostics.phase='round_reset'
+    stage=stage if stage in STAGES else trial.stage
+    case=tolerance_case(tolerance_id,stage,limit,fault_plan)
     plan=None if fault_plan is None else parse_plan(fault_plan,limit,state['mode'],bool(sonar))
     close_firmware('reset')
+    if round_tolerance is not None or case is not None:
+        set_practice_light(case['light_scale'] if case is not None else 1)
+    round_tolerance=None if case is None else dict(version=1,case=case,limit_s=limit,observed=None)
     effects=Imperfections(HW.get('imperfections',{}))
     trace_epoch+=1
     trace_start=sim.getTime()
@@ -315,7 +353,14 @@ def reset(group=None,color=None,stage=None,limit=None,fault_plan=None):
     incident_flags.clear()
     if group is not None:state['group']=max(1,int(group))
     if color in ('red','yellow','blue'):state['color']=color
-    trial=StageTrial(stage if stage in STAGES else trial.stage,CONFIG)
+    start=starting_pose(CONFIG,stage)
+    block_xy=CONFIG['pickup'].copy()
+    if case is not None:
+        lateral=case['lateral_mm']/1000
+        start[0]-=lateral*math.sin(start[2])
+        start[1]+=lateral*math.cos(start[2])
+        block_xy[1]+=case['block_y_mm']/1000
+    trial=StageTrial(stage,CONFIG,start)
     round_id+=1
     round_result=None
     round_error=None
@@ -327,7 +372,7 @@ def reset(group=None,color=None,stage=None,limit=None,fault_plan=None):
     x,y,yaw=trial.start
     translation.setSFVec3f([x,y,Z])
     rotation.setSFRotation([0,0,1,yaw]);car.resetPhysics()
-    block_position.setSFVec3f(CONFIG['pickup']+[CONFIG.get('floor_z',-.005)+.035])
+    block_position.setSFVec3f(block_xy+[CONFIG.get('floor_z',-.005)+.035])
     block_rotation.setSFRotation([0,0,1,0]);block.resetPhysics()
     block_color.setSFColor({'red':[.9,.025,.04],'yellow':[1,.78,.015],'blue':[.025,.14,.9]}[state['color']])
     tag_texture.setMFString(0,f"textures/tag{state['group']%2}.png")
@@ -353,6 +398,8 @@ def finish_round(reason):
     state['running']=False
     manual[:]=[0,0]
     round_result=dict(trial_report(pose()),id=round_id,reason=reason)
+    if round_tolerance is not None:
+        set_practice_light(1)
     log('本轮结果已记录')
     previous_phase=diagnostics.phase
     diagnostics.phase='round_end'
@@ -373,6 +420,8 @@ def receive(message):
             log('本轮已结束，请先重新摆位')
             return
         round_error=None
+        if round_tolerance is not None and round_tolerance['observed'] is None:
+            round_tolerance['observed']=observe_tolerance_start()
         if state['mode']=='firmware' and firmware is None:
             diagnostics.phase='firmware_start'
             record('firmware_start_requested')
@@ -397,9 +446,16 @@ def receive(message):
         diagnostics.phase='panel_pause'
         if state['running']:
             record('run_paused',reason='manual',firmware_active=firmware is not None)
+        if round_tolerance is not None:
+            reset()
+            return
         state['running']=False;manual[:]=[0,0]
         round_faults=None
-    elif command=='reset':reset(data.get('group'),data.get('color'),data.get('stage'),data.get('limit'),data.get('fault_plan'))
+    elif command=='reset':reset(data.get('group'),data.get('color'),data.get('stage'),data.get('limit'),
+                                data.get('fault_plan'),data.get('tolerance_id'))
+    elif command=='end_tolerance':
+        if round_tolerance is not None and data.get('round_id')==round_id:
+            reset()
     elif command=='finish_round':
         finish_round('manual')
     elif command=='mode':
@@ -411,12 +467,17 @@ def receive(message):
         round_faults=None
         state['mode']=data['value'];state['running']=False;manual[:]=[0,0]
         record('mode_changed')
-        if state['mode'] in ('member','firmware'):
+        if round_tolerance is not None:
+            reset()
+        elif state['mode'] in ('member','firmware'):
             algorithm=load_algorithm()
         log('模式已切换，点击开始运行')
     elif command=='reload':
         diagnostics.phase='panel_reload'
-        algorithm=load_algorithm()
+        if round_tolerance is not None:
+            reset()
+        else:
+            algorithm=load_algorithm()
         close_firmware('reload')
         effects.queue.clear()
         round_faults=None
@@ -425,6 +486,9 @@ def receive(message):
     elif command=='uart':queue_uart(data['value'])
     elif command=='drive':
         diagnostics.phase='panel_drive'
+        if round_tolerance is not None:
+            reset()
+            return
         if round_result is not None or sim.getTime()<ready_at:
             return
         if state['elapsed']==0 and not state['running']:
@@ -474,6 +538,8 @@ while sim.step(STEP)!=-1:
         except Exception as error:
             report_error(error)
             round_error=str(error)
+            if round_tolerance is not None:
+                set_practice_light(1)
             state['running']=False;log(f'算法或命令错误：{error}');traceback.print_exc()
     diagnostics.phase='simulation_step'
     key=sim.getKeyboard().getKey()
@@ -576,6 +642,8 @@ while sim.step(STEP)!=-1:
         except Exception as error:
             report_error(error)
             round_error=str(error)
+            if round_tolerance is not None:
+                set_practice_light(1)
             state['running']=False;log(f'程序错误，已停车：{error}');traceback.print_exc()
     diagnostics.phase='actuator'
     for i,name in enumerate(('left','right')):

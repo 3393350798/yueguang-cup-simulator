@@ -21,7 +21,7 @@ MAX_FRAME = 256
 MAX_TX_PREVIEW = 512
 
 
-def load_setup(args):
+def load_setup(args, *, image_override=None):
     firmware = read_object(args.firmware_config)
     board = read_object(args.board_config)
     if board.get('mcu') != 'STM32F103C8T6':
@@ -36,12 +36,12 @@ def load_setup(args):
             raise ValueError(f'{gpio} 重复绑定：{used[gpio]}、{role}；请为各外设分别绑定。')
         used[gpio] = role
         resolved[role] = gpio
-    image = firmware.get('image')
+    image = str(image_override.resolve()) if image_override is not None else firmware.get('image')
     if not isinstance(image, str) or not image.strip():
         raise ValueError('未导入固件。先在 scripts/import-hardware.bat 的固件页导入已编译镜像。')
     path = (ROOT / image).resolve()
     if not path.is_file():
-        raise ValueError('找不到已导入的固件镜像，请重新导入。')
+        raise ValueError('找不到指定的固件镜像。' if image_override is not None else '找不到已导入的固件镜像，请重新导入。')
     if path.stat().st_size > 16 * 1024 * 1024:
         raise ValueError('固件镜像超过 16 MiB，请检查构建产物。')
     validate_image(path, firmware)

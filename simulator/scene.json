@@ -337,5 +337,56 @@
     "mass_kg": 0.04,
     "floor_friction": 0.5
   },
+  "tolerance_cases": [
+    {
+      "id": "nominal",
+      "label": "基准摆位",
+      "lateral_mm": 0,
+      "block_y_mm": 0,
+      "light_scale": 1
+    },
+    {
+      "id": "start-left",
+      "label": "起步左偏 10 mm",
+      "lateral_mm": 10,
+      "block_y_mm": 0,
+      "light_scale": 1
+    },
+    {
+      "id": "start-right",
+      "label": "起步右偏 10 mm",
+      "lateral_mm": -10,
+      "block_y_mm": 0,
+      "light_scale": 1
+    },
+    {
+      "id": "block-up",
+      "label": "物块场地 Y +8 mm",
+      "lateral_mm": 0,
+      "block_y_mm": 8,
+      "light_scale": 1
+    },
+    {
+      "id": "block-down",
+      "label": "物块场地 Y −8 mm",
+      "lateral_mm": 0,
+      "block_y_mm": -8,
+      "light_scale": 1
+    },
+    {
+      "id": "light-dim",
+      "label": "灯光 ×0.75",
+      "lateral_mm": 0,
+      "block_y_mm": 0,
+      "light_scale": 0.75
+    },
+    {
+      "id": "light-bright",
+      "label": "灯光 ×1.25",
+      "lateral_mm": 0,
+      "block_y_mm": 0,
+      "light_scale": 1.25
+    }
+  ],
   "geometry_note": "2000 × 2000 mm 赛规定尺版；挡板沿超声波区黑框长边全长布置"
 }
