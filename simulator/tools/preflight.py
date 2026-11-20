@@ -53,10 +53,10 @@ def read_object(path):
 
 def check_dependencies(report, explicit_home, repository):
     version = sys.version_info
-    if version >= (3, 11):
+    if (3, 11) <= version[:2] <= (3, 13):
         report.add('通过', 'Python', platform.python_version())
     else:
-        report.add('失败', 'Python', '需要 Python 3.11 或以上，请运行 setup.bat。')
+        report.add('失败', 'Python', '需要 Python 3.11～3.13，请运行 setup.bat。')
     for name in ('numpy', 'cv2', 'PIL', 'urdf2webots', 'trimesh', 'collada'):
         try:
             module = importlib.import_module(name)
@@ -345,11 +345,17 @@ def main(argv=None, root=ROOT):
     parser = argparse.ArgumentParser(description='月光杯仿真启动自检')
     parser.add_argument('--route', choices=ROUTES, default='manual')
     parser.add_argument('--boot', action='store_true', help='启动独立 Renode 运行 32 ms，不驱动小车')
-    parser.add_argument('--interactive', action='store_true', help='选择接入方案')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--interactive', action='store_true', help='选择接入方案')
+    mode.add_argument('--dependencies-only', action='store_true', help='仅核对启动依赖，不探测端口及外设')
     parser.add_argument('--webots-home', help='自定义 Webots 安装目录')
     parser.add_argument('--panel-port', type=port_number, default=1234)
     parser.add_argument('--vision-port', type=port_number, help='覆盖配置的本机视觉端口，仅用于检查')
     args = parser.parse_args(argv)
+    if args.dependencies_only:
+        report = Report()
+        check_dependencies(report, args.webots_home, root.parent)
+        return int(bool(report.failures))
     if args.interactive:
         print('请选择接入方案：')
         for i, option in enumerate(ROUTES.values(), 1):

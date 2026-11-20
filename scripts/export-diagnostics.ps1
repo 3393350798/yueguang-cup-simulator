@@ -13,7 +13,7 @@ $sessionPattern = '\d{8}T\d{6}Z-[0-9a-f]{8,32}'
 # Export only enumerated fields. Raw process output may include private paths,
 # code snippets, protocol bytes or exception messages supplied by member code.
 $events = @{
-    launch = @('launch_started','scene_generated','webots_started','panel_ready','launch_failed','browser_open_failed')
+    launch = @('launch_started','dependencies_ready','scene_generated','webots_started','panel_ready','launch_ready','launch_failed','browser_open_failed')
     setup = @('setup_started','python_found','environment_ready','setup_finished','setup_failed')
     serial = @('serial_started','serial_ports','serial_opened','serial_result')
     runtime = @('startup_begin','config_ready','scene_loaded','controller_ready','mode_changed','algorithm_loaded',
@@ -31,8 +31,8 @@ $serialRanges = @{
     stop_bits=@(1,2); tx_bytes=@(0,2000000); rx_bytes=@(0,2000000); first_rx_ms=@(0,30000)
 }
 $allowed = @{
-    code = @('missing_python','missing_webots','port_conflict','scene_generation_failed','webots_start_failed',
-        'webots_exit','panel_timeout','unexpected_failure','unsupported_python','venv_failed',
+    code = @('missing_python','missing_webots','dependency_check_failed','port_conflict','scene_generation_failed','webots_start_failed',
+        'webots_exit','panel_timeout','controller_timeout','unexpected_failure','unsupported_python','venv_failed',
         'dependency_install_failed','browser_open_failed')
     mode = @('manual','member','firmware')
     stage = @('full','pickup','channel','parking')
@@ -176,6 +176,8 @@ try {
                         } else {
                             $row=ConvertFrom-Json -InputObject $line
                         }
+                        if ($source -eq 'runtime' -and
+                            ($row.source -cne 'runtime' -or $row.session -cne $session)) { continue }
                         $safe=Select-SafeRow $row $source
                         if ($null -ne $safe) { $rows+=@($safe) }
                     } catch { continue }

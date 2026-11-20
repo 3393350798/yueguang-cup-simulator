@@ -98,18 +98,53 @@ function captureRound(config,row,state,verdict){
   };
 }
 
+const supportSchema='moonlight-round-support-v1';
+// Rebuild persisted snapshots with exactly the same structure as a live
+// support export. Keep identifier-like strings outside this allowlist.
+const sampleEnvironment={start_ms:0,duration_ms:64};
+const supportShape=captureRound({robot:{body:{},wheels:{},camera:{},ir:{},sonar:{}}},
+  {placed:{},fault_run:{version:1,plan:{sonar:sampleEnvironment,uart:{...sampleEnvironment,action:'delay',delay_ms:1}},
+    first_event:{kind:'wall_contact',position_mm:[0,0]}}},null,null);
+const supportStrings=new Set([supportSchema,...fields,...Object.keys(modes),...Object.keys(stages),...Object.keys(colors),
+  'odd','even','parity-colors','parametric','urdf','mesh','none','manual','time','error',
+  ...verdicts,'controller_error',...Object.keys(faultMarks),'drop','delay','left','right']);
+function restoreFields(raw,shape){
+  if(Array.isArray(shape)){
+    if(!Array.isArray(raw)||raw.length!==shape.length||
+        !raw.every(value=>typeof value==='number'&&Number.isFinite(value)||value===null))return null;
+    return raw.slice();
+  }
+  if(shape&&typeof shape==='object'){
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))return null;
+    const output={};
+    for(const [key,child] of Object.entries(shape)){
+      if(!Object.hasOwn(raw,key))continue;
+      output[key]=key==='project_version'?version(raw[key]):restoreFields(raw[key],child);
+    }
+    return output;
+  }
+  return typeof raw==='boolean'||(typeof raw==='number'&&Number.isFinite(raw))||supportStrings.has(raw)?raw:null;
+}
+
+export function restoreRoundSnapshot(raw){
+  if(raw?.schema!==supportSchema||
+     ['scenario','configuration','result','round_diagnostics'].some(key=>!raw[key]||typeof raw[key]!=='object'||Array.isArray(raw[key]))||
+     !Object.hasOwn(stages,raw.scenario.stage)||!Object.hasOwn(colors,raw.scenario.color))return null;
+  return restoreFields(raw,supportShape);
+}
+
 // A diagnostic ZIP is supplied by the member. Keep only known values useful
 // in triage; never preserve whole rows, filenames, identifiers, or timestamps.
 const knownEvents={
   setup:['setup_started','python_found','environment_ready','setup_finished','setup_failed'],
-  launch:['launch_started','scene_generated','webots_started','panel_ready','launch_failed','browser_open_failed'],
+  launch:['launch_started','dependencies_ready','scene_generated','webots_started','panel_ready','launch_ready','launch_failed','browser_open_failed'],
   runtime:['startup_begin','config_ready','controller_ready','algorithm_loaded','vision_link_ready',
     'firmware_start_requested','firmware_started','firmware_closed','error','shutdown','log_limit'],
   serial:['serial_started','serial_ports','serial_opened','serial_result'],
 };
 const knownCodes=[
-  'missing_python','missing_webots','port_conflict','scene_generation_failed','webots_start_failed',
-  'webots_exit','panel_timeout','unexpected_failure','unsupported_python','venv_failed','dependency_install_failed','browser_open_failed',
+  'missing_python','missing_webots','dependency_check_failed','port_conflict','scene_generation_failed','webots_start_failed',
+  'webots_exit','panel_timeout','controller_timeout','unexpected_failure','unsupported_python','venv_failed','dependency_install_failed','browser_open_failed',
   'serial_dependency_missing','serial_list_failed','serial_no_ports','serial_list_only','serial_cancelled','serial_port_unavailable',
   'serial_port_denied_or_busy','serial_open_failed','serial_io_failed','serial_write_failed','serial_listening_silent',
   'serial_bytes_received','serial_reply_timeout','serial_reply_mismatch','serial_reply_match','serial_rx_limit',
@@ -169,13 +204,13 @@ export function summarizeDiagnostic(raw){
 
 const json=value=>JSON.stringify(value,null,2)+'\n';
 
-export function initHelpBundle(config,incidents){
+export function initHelpBundle(config){
   const $=key=>document.getElementById('help-'+key);
   const modal=$('dialog'), include=$('with-clip'), file=$('diagnostic-file'), save=$('download'), status=$('status');
-  let snapshot,key,supplement,reading=false,selection=0;
+  let snapshot,getClip,supplement,reading=false,selection=0;
   const setStatus=value=>{status.textContent=value;};
   const roundClip=()=>{
-    const clip=incidents.exportRound(key), scenario=snapshot.scenario;
+    const clip=getClip?.(), scenario=snapshot.scenario;
     return clip&&clip.field===scenario.field&&clip.stage===scenario.stage&&clip.color===scenario.color&&
       clip.step_ms===scenario.step_ms?clip:null;
   };
@@ -196,8 +231,8 @@ export function initHelpBundle(config,incidents){
       (include.checked&&clip?'、failure-replay.json':'');
     save.disabled=reading;
   }
-  function open(data,roundKey){
-    snapshot=data;key=roundKey;supplement=null;reading=false;selection++;
+  function open(data,readClip){
+    snapshot=data;getClip=readClip;supplement=null;reading=false;selection++;
     include.checked=false;file.value='';setStatus('');
     for(const details of modal.querySelectorAll('details'))details.open=false;
     preview(roundClip());
@@ -252,6 +287,6 @@ export function initHelpBundle(config,incidents){
     setStatus('求助包已生成。核对后可自行发送。');
   };
   $('close').onclick=()=>modal.close();
-  modal.onclose=()=>{selection++;snapshot=null;key=undefined;supplement=null;file.value='';};
+  modal.onclose=()=>{selection++;snapshot=null;getClip=null;supplement=null;file.value='';};
   return {capture:(row,state,verdict)=>captureRound(config,row,state,verdict),open};
 }

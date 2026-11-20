@@ -38,6 +38,10 @@ dialog#help-dialog::backdrop{background:#142c3d88}
 .trial-regression{background:#f3f8f8;border:1px solid #dbe8ec;border-radius:7px;padding:6px 9px;margin:8px 0}
 .trial-regression p{margin:4px 0;line-height:1.6}
 .trial-regression td.regression-bad{color:#a02d2d;font-weight:700}
+.practice-history #history-items details{margin:5px 0;padding:5px 8px;background:#f3f8f8;border:1px solid #dbe8ec;border-radius:6px}
+.practice-history ol{padding-inline-start:24px}
+.practice-history li{margin:6px 0;overflow-wrap:anywhere}
+.practice-history li div{display:flex;flex-wrap:wrap;gap:4px 7px;margin:3px 0}
 #trial-tolerance-comparison th,#trial-tolerance-comparison td{overflow-wrap:anywhere}
 @media(max-width:540px){
   #trial-tolerance-comparison table{min-width:0;table-layout:fixed}

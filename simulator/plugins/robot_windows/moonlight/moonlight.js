@@ -1,6 +1,6 @@
 const build=new URLSearchParams(location.search).get('v')||Date.now();
-const [{default:config},{initTrace},{initTrials},{initIncidents},{initHelpBundle}]=await Promise.all(
-  ['scene','trace','trials','incidents','help-bundle'].map(name=>import('./'+name+'.js?v='+encodeURIComponent(build)))
+const [{default:config},{initTrace},{initTrials},{initIncidents,safeClip},{initHelpBundle,restoreRoundSnapshot},{initPracticeHistory}]=await Promise.all(
+  ['scene','trace','trials','incidents','help-bundle','practice-history'].map(name=>import('./'+name+'.js?v='+encodeURIComponent(build)))
 );
 const elements=new Map();
 const $=id=>{
@@ -76,8 +76,12 @@ function send(command,extra={}){
   if(socket?.readyState===1)socket.send(`robot:${robotName}:${payload}`);
   else pending.push(payload);
 }
-const trials=initTrials(send,incidents,initHelpBundle(config,incidents),
-  config.tolerance_cases??[],config.robot?.imperfections?.light_gain??1);
+const helpBundle=initHelpBundle(config);
+const history=initPracticeHistory({openClip:incidents.openStored,openHelp:helpBundle.open,
+  clearIncidents:incidents.clear,validateClip:safeClip,validateSnapshot:restoreRoundSnapshot});
+incidents.onSettled(history.attach);
+const trials=initTrials(send,incidents,helpBundle,
+  config.tolerance_cases??[],config.robot?.imperfections?.light_gain??1,history);
 function connectionStatus(message, warning=false){
   const badge=$('connection');
   if(badge.textContent!==message)badge.textContent=message;
@@ -115,6 +119,12 @@ function schedulePaint(){
   });
 }
 function receive(data){
+  if(state&&(state.history_project_id??null)!==(data.history_project_id??null)){
+    // The assets, current trial results and live waveform all belong to the
+    // previous project. Reload the panel rather than reusing these objects.
+    location.reload();
+    return;
+  }
   // Webots can relay the same update more than once when multiple clients connect.
   if(data.panel_session){
     if(data.panel_session!==panelSession){panelSession=data.panel_session;panelTick=-1;path=[];mapDirty=true;}
@@ -126,6 +136,8 @@ function receive(data){
   state=data;
   // Consume every batch even if several arrive before the next browser paint.
   const epoch=data.panel_session?data.panel_session+':'+data.trace_epoch:data.trace_epoch;
+  incidents.bindProject(data.history_project_id);
+  history.bind(data.history_project_id);
   trace.receive(epoch,data.trace);
   incidents.receive(epoch,data.trace,{stage:data.trial?.stage??'full',color:data.color,timedEnd:data.round_result?.trace_end_t});
   trials.receive(data,epoch);

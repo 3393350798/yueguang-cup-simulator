@@ -5,7 +5,7 @@ const incidentNames={
 const stageNames={full:'全程',pickup:'识别与抓放',channel:'超声波通道',parking:'终点停车'};
 const colorNames={red:'红色',yellow:'黄色',blue:'蓝色'};
 const modes=['manual','member','firmware'];
-const storeKey='moonlight-incident-clips-v1';
+const storePrefix='moonlight-incident-clips-v2:';
 const format='moonlight-incident-v1';
 const beforeSeconds=5, afterSeconds=3, maxClips=4, maxSamples=2002, maxMarks=12;
 const maxStored=2*1024*1024;
@@ -43,7 +43,7 @@ function safeSample(row){
   };
 }
 
-function safeClip(value){
+export function safeClip(value){
   if(value?.format!==format||!fields.includes(value.field)||!steps.includes(value.step_ms)||
       !Array.isArray(value.samples)||!value.samples.length||value.samples.length>maxSamples||
       !Array.isArray(value.marks)||!value.marks.length||value.marks.length>maxMarks||
@@ -64,24 +64,23 @@ function safeClip(value){
 export function initIncidents({stepMs,field,open}){
   const $=id=>document.getElementById('incident-'+id);
   const items=$('items'), input=$('file'), status=$('status');
-  // A live round key links the reports on this page to their own clips.
-  // Never add the controller session or round identity to persisted/exported clips.
+  // Round keys stay outside the shareable replay.
   const clipEpochs=new WeakMap();
-  let clips=[], recent=[], epoch, active=null, storing=true, revision=0;
+  let clips=[], recent=[], epoch, project, active=null, storing=true, revision=0, onSettled;
   const readClips=()=>{
-    const raw=localStorage.getItem(storeKey)||'[]';
+    const raw=localStorage.getItem(storePrefix+project)||'[]';
     if(raw.length>maxStored)return [];
     const list=JSON.parse(raw);
     return Array.isArray(list)?list.slice(0,maxClips).map(safeClip).filter(Boolean):[];
   };
-  try{clips=readClips();}catch{storing=false;}
   const setStatus=text=>{status.textContent=text;};
   const persist=()=>{
+    if(!project)return;
     try{
       let serialized=JSON.stringify(clips);
       // Storage limits vary; remove the oldest clip first.
       while(serialized.length>maxStored&&clips.length>1){clips.pop();serialized=JSON.stringify(clips);}
-      localStorage.setItem(storeKey,serialized);storing=true;
+      localStorage.setItem(storePrefix+project,serialized);storing=true;
     }
     catch{storing=false;}
   };
@@ -102,7 +101,7 @@ export function initIncidents({stepMs,field,open}){
       return item;
     });
     items.replaceChildren(...rows);
-    setStatus(!storing?'浏览器存储不可用，本页内仍可回放和下载。':clips.length?'':'暂无失败片段');
+    setStatus(!project?'未确认工程时仅显示本页片段。':!storing?'浏览器存储不可用，本页内仍可回放和下载。':clips.length?'':'暂无失败片段');
   }
   function show(clip){
     if(clip.field!==field){setStatus('片段的赛场版本与当前赛场不一致。');return;}
@@ -111,10 +110,13 @@ export function initIncidents({stepMs,field,open}){
   }
   function finish(complete=false){
     if(!active)return;
-    active.clip.partial=!complete;
+    const clip=active.clip;
+    clip.partial=!complete;
     active=null;
     persist();
     redraw();
+    const key=clipEpochs.get(clip);
+    if(key!==undefined&&onSettled)onSettled(key,safeClip(clip));
   }
   function addClip(clip){
     clipEpochs.set(clip,epoch);
@@ -142,12 +144,35 @@ export function initIncidents({stepMs,field,open}){
     }catch{setStatus('无法打开：文件不是有效的失败片段。');}
   };
   window.addEventListener('pagehide',()=>{if(active)persist();});
+  window.addEventListener('storage',event=>{
+    if(project&&event.key===storePrefix+project&&event.newValue===null){
+      recent=[];active=null;clips=[];redraw();
+    }
+  });
   redraw();
   return {
     get revision(){return revision;},
+    bindProject(identity){
+      const next=/^[a-f0-9]{32}$/.test(identity||'')?identity:undefined;
+      if(next===project)return;
+      project=next;recent=[];epoch=undefined;active=null;clips=[];storing=true;
+      if(project)try{clips=readClips();}catch{storing=false;}
+      redraw();
+    },
+    clear(){
+      recent=[];active=null;clips=[];
+      if(project)try{localStorage.removeItem(storePrefix+project);}catch{storing=false;redraw();return false;}
+      redraw();
+      return true;
+    },
+    onSettled(callback){onSettled=callback;},
+    snapshotRound(key){
+      const clip=key===undefined?null:clips.find(clip=>clipEpochs.get(clip)===key);
+      return safeClip(clip);
+    },
+    openStored(clip){show(clip);},
     hasRound(key){return key!==undefined&&clips.some(clip=>clip!==active?.clip&&clipEpochs.get(clip)===key);},
     exportRound(key){
-      // Only the current page's completed clip may be associated with a round.
       if(key===undefined)return null;
       const clip=clips.find(clip=>clip!==active?.clip&&clipEpochs.get(clip)===key);
       return clip?safeClip(clip):null;

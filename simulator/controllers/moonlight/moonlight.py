@@ -19,6 +19,30 @@ diagnostics=RuntimeLog(ROOT.parent)
 diagnostics.install_exception_hook()
 PROJECT_VERSION=project_version(ROOT.parent)
 diagnostics.event('startup_begin',project_version=PROJECT_VERSION)
+
+
+def history_project_id(project):
+    """Identify this local directory without transmitting its path."""
+    secret=project/'output'/'history-salt'
+    try:
+        secret.parent.mkdir(exist_ok=True)
+        try:
+            with secret.open('x',encoding='ascii') as stream:
+                stream.write(uuid4().hex)
+        except FileExistsError:
+            pass
+        with secret.open(encoding='ascii') as stream:
+            salt=stream.read(33)
+        if len(salt)!=32 or any(char not in '0123456789abcdef' for char in salt):
+            return None
+        # A copied project containing output must not inherit the original history.
+        identity=salt+'\0'+os.path.normcase(str(project))
+        return sha256(identity.encode('utf-8')).hexdigest()[:32]
+    except (OSError,UnicodeError):
+        return None
+
+
+HISTORY_PROJECT_ID=history_project_id(ROOT.parent)
 # Webots R2025a 的 Windows 启动器可能以错误编码传递中文安装目录。
 # 用已找到的 controller 包位置恢复真实运行时路径，再加载其 DLL。
 controller_spec=importlib.util.find_spec('controller')
@@ -144,7 +168,7 @@ incident_flags=set()
 last_view_wall=time.monotonic()
 active_steps=0
 panel_rate=0.0
-panel_session=uuid4().hex[:8]
+panel_session=uuid4().hex
 vision_link=None
 
 def update_log_context():
@@ -565,9 +589,7 @@ def receive(message):
 capture=os.environ.get('YUEGUANG_CAPTURE_DIR')
 diagnostics.phase='webots_setup'
 car.saveState('practice-ready')
-diagnostics.phase='controller_ready'
-record('controller_ready',ir_count=len(ir),sonar_count=len(sonar),stage=trial.stage,
-       vision_link=vision_link is not None,firmware_configured=configured)
+panel_data_sent=False
 diagnostics.phase='simulation_step'
 while sim.step(STEP)!=-1:
     tick+=1
@@ -756,13 +778,19 @@ while sim.step(STEP)!=-1:
             last_view_wall=now
             active_steps=0
         payload=dict(state,sensors=sensors,pose=p,firmware=firmware_status,panel_session=panel_session,panel_tick=tick,
-                     project_version=PROJECT_VERSION,
+                     project_version=PROJECT_VERSION,history_project_id=HISTORY_PROJECT_ID,
                      trace=trace,trace_epoch=trace_epoch,rate=panel_rate,claw=grasp,block_position=block_pose,
                      trial=dict(trial_report(p),id=round_id),round_result=round_result,
                      resetting=sim.getTime()<ready_at,round_error=round_error,
                      target_side='left' if state['group']%2==0 else 'right')
         if panel_image is not None:payload['image']=panel_image
         sim.wwiSendText(json.dumps(payload,ensure_ascii=True,separators=(',',':')))
+        if not panel_data_sent:
+            panel_data_sent=True
+            diagnostics.phase='controller_ready'
+            record('controller_ready',ir_count=len(ir),sonar_count=len(sonar),stage=trial.stage,
+                   vision_link=vision_link is not None,firmware_configured=configured)
+            diagnostics.phase='simulation_step'
         trace.clear()
     if capture and tick==960//STEP:
         destination=Path(capture);destination.mkdir(parents=True,exist_ok=True)

@@ -55,7 +55,7 @@ function toleranceSummary(run,rows){
     pass_rate:valid?passed/valid:null};
 }
 
-export function initTrials(send,incidents,help,presets=[],lightGain=1){
+export function initTrials(send,incidents,help,presets=[],lightGain=1,history){
   const $=id=>document.getElementById('trial-'+id);
   const value=id=>document.getElementById(id).value;
   const field=(id,min,max)=>Math.max(min,Math.min(max,Math.round(Number($(id).value))||min));
@@ -63,7 +63,7 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1){
     const group=Math.round(Number(value('group')));
     return {stage:$('stage').value,group:Number.isSafeInteger(group)&&group>0?group:1,color:value('color')};
   };
-  let current,batch,completedEpoch,clipRevision,baseline=[],notice='',matrixSerial=0,toleranceSerial=0,lastTolerance=null;
+  let current,batch,completedEpoch,orphanedEpoch,clipRevision,baseline=[],notice='',matrixSerial=0,toleranceSerial=0,lastTolerance=null;
   let baselineTolerance=null,toleranceComparison=null;
   const records=[];
   // Report JSON stays separate from replay JSON and browser-only lookup keys.
@@ -98,7 +98,7 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1){
     if(supportData.has(r)){
       const button=document.createElement('button');
       button.className='small';button.type='button';button.textContent='导出本轮求助包';
-      button.onclick=()=>help.open(supportData.get(r),key);
+      button.onclick=()=>help.open(supportData.get(r),()=>incidents.exportRound(key));
       tr.cells[1].append(document.createElement('br'),button);
     }
     return tr;
@@ -211,6 +211,7 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1){
     }else if(kind==='matrix')cases=[2,1].flatMap(group=>Object.keys(colors).map(color=>({...plan,group,color})));
     else cases=Array.from({length:field('count',1,20)},()=>plan);
     batch={kind,index:0,cases,label:$('label').value,mode:current.mode,session:current.panel_session,
+      historyId:current.panel_session+':batch:'+String(current.trial.id+1),
       matrixSerial:kind==='matrix'?++matrixSerial:null};
     notice='';
     resetCase(current);
@@ -238,7 +239,11 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1){
       incidents.finishTimeout(epoch,trace_end_t,row.elapsed,row);
     recordEpochs.set(row,epoch);
     const verdict=current?.round_error?firstUnmet({...row,reason:'error'}):firstUnmet(row);
-    supportData.set(row,help.capture(row,current,verdict));
+    const snapshot=help.capture(row,current,verdict);
+    supportData.set(row,snapshot);
+    history.record(epoch,{batch:plan?.historyId??epoch,kind:plan?.kind??'single',index:(plan?.index??0)+1,
+      total:plan?.cases.length??1,label:String(row.label).slice(0,50),group:row.group},snapshot,
+      incidents.snapshotRound(epoch));
     records.push(row);
   }
   function finishCase(r,state,epoch){
@@ -295,6 +300,7 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1){
       else send('pause');
     },
     receive(state,epoch){
+      const initial=current==null;
       current=state;
       if(!state.trial)return;
       const stageText=names[state.trial.stage]+(state.resetting?' · 等待停稳':'');
@@ -303,7 +309,16 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1){
       if($('finish').disabled!==disabled)$('finish').disabled=disabled;
       if(clipRevision!==incidents.revision)redraw();
       if(!batch){
-        if(state.round_result&&!state.round_result.tolerance_run&&epoch!==completedEpoch){record(state.round_result,epoch);redraw();}
+        // Reopening this page does not resume an old automatic batch or
+        // create a second record for its already stopped final round.
+        if(initial){
+          if(state.round_result)completedEpoch=epoch;
+          if(state.running)orphanedEpoch=epoch;
+        }
+        const r=state.round_result;
+        if(r&&!r.tolerance_run&&epoch!==completedEpoch&&!(r.reason==='time'&&epoch===orphanedEpoch)){
+          record(r,epoch);redraw();
+        }
         return;
       }
       if(state.mode!==batch.mode||state.panel_session!==batch.session){abort('运行环境已切换，多轮已停止。');return;}

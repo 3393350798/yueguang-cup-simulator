@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>月光杯 · 仿真练习台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="moonlight.css?v=tolerance-compare"><link rel="stylesheet" href="trace.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>月光杯 · 仿真练习台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="moonlight.css?v=practice-history"><link rel="stylesheet" href="trace.css"></head>
 <body>
 <header><div><span class="eyebrow">MOONLIGHT / ROBOTICS LAB</span><h1>月光杯<span>仿真练习台</span></h1></div><span id="connection" class="badge" role="status">连接场景中</span></header>
 <main>
@@ -19,7 +19,7 @@
     <div class="task-grid"><div><span>指定位置</span><strong id="target">左侧 · 红色</strong></div><div><span>抓取</span><strong id="grasp">等待</strong></div><div><span>放置结果</span><strong id="placed">等待</strong></div><div><span>终点停车</span><strong id="parking">等待</strong></div></div>
     <details><summary>运行事件</summary><ol id="events"></ol></details>
     <details class="incident-panel"><summary>失败回放 <span id="incident-count" class="mini"></span></summary>
-      <p>面板连接时，自动保留最近 4 段失败回放，包括碰撞、意外掉块、程序异常，以及达到时限但任务未完成的轮次。点击片段可定位到对应时刻。</p>
+      <p>最近 4 段失败回放。已记录的轮次及对应片段还可在「本机练习历史」按批次查看。</p>
       <ol id="incident-items"></ol><p id="incident-status" role="status"></p>
       <button id="incident-import" class="small">打开失败片段</button>
       <input id="incident-file" type="file" accept=".json,application/json" hidden>
@@ -73,6 +73,13 @@
           <div class="trial-scroll"><table><thead><tr><th>赛段／工况</th><th>历史</th><th>当前</th><th>变化</th></tr></thead><tbody id="trial-regression-rows"></tbody></table></div>
         </div>
         <div class="trial-scroll"><table><thead><tr><th>方案／赛段／工况</th><th>首个未通过项</th><th>抓放</th><th>通道</th><th>停车</th><th>用时</th></tr></thead><tbody id="trial-rows"></tbody></table></div>
+      </details>
+      <details class="practice-history">
+        <summary>本机练习历史</summary>
+        <p>按批次保留本工程的结果与失败回放，不会自动上传。对照两套方案仍请导出结果。</p>
+        <p id="history-status" role="status">等待场景确认本工程。</p>
+        <div id="history-items"></div>
+        <button id="history-clear" class="small" type="button" disabled>清除本工程历史与片段</button>
       </details>
     </section>
     <section class="trace-panel" aria-labelledby="trace-heading">
