@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>月光杯 · 仿真练习台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="moonlight.css?v=help-bundle"><link rel="stylesheet" href="trace.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>月光杯 · 仿真练习台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="moonlight.css?v=fault-regression"><link rel="stylesheet" href="trace.css"></head>
 <body>
 <header><div><span class="eyebrow">MOONLIGHT / ROBOTICS LAB</span><h1>月光杯<span>仿真练习台</span></h1></div><span id="connection" class="badge" role="status">连接场景中</span></header>
 <main>
@@ -39,7 +39,27 @@
           <input id="trial-file" type="file" accept=".json,application/json" hidden>
         </div>
         <p>固定工况按偶数、奇数组各跑红、黄、蓝三个物块。每轮沿用所选赛段、用时和当前车辆设置。</p>
+        <details class="fault-plan">
+          <summary>定时故障（用于固定工况）</summary>
+          <p>按每轮开始后的仿真时间触发。两种故障可同时启用，关闭则执行正常六轮。</p>
+          <div class="settings">
+            <label><input id="trial-fault-sonar" type="checkbox"> 超声波无回波</label>
+            <label>开始秒 <input id="trial-sonar-start" type="number" min="0" max="180" step="0.001" value="0.5" disabled></label>
+            <label>持续秒 <input id="trial-sonar-length" type="number" min="0.064" max="180" step="0.001" value="0.5" disabled></label>
+          </div>
+          <div class="settings">
+            <label>虚拟 UART <select id="trial-fault-uart"><option value="">关闭</option><option value="drop">断流</option><option value="delay">延迟</option></select></label>
+            <label>开始秒 <input id="trial-uart-start" type="number" min="0" max="180" step="0.001" value="0.5" disabled></label>
+            <label>持续秒 <input id="trial-uart-length" type="number" min="0.064" max="180" step="0.001" value="0.5" disabled></label>
+            <label>追加毫秒 <input id="trial-uart-delay" type="number" min="1" max="3000" value="150" disabled></label>
+          </div>
+          <p>UART 只模拟发往虚拟 STM32 的输入，需要固件模式。不会访问真实串口。</p>
+        </details>
         <p id="trial-summary" role="status">尚无记录</p>
+        <div id="trial-regression" class="trial-regression" hidden>
+          <p id="trial-regression-summary" role="status"></p>
+          <div class="trial-scroll"><table><thead><tr><th>赛段／工况</th><th>历史</th><th>当前</th><th>变化</th></tr></thead><tbody id="trial-regression-rows"></tbody></table></div>
+        </div>
         <div class="trial-scroll"><table><thead><tr><th>方案／赛段／工况</th><th>首个未通过项</th><th>抓放</th><th>通道</th><th>停车</th><th>用时</th></tr></thead><tbody id="trial-rows"></tbody></table></div>
       </details>
     </section>

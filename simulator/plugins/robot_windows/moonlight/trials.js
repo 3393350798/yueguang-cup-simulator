@@ -1,3 +1,4 @@
+const {settingsFromPanel,samePlan,compareLatest,faultNotes}=await import('./fault-regression.js'+new URL(import.meta.url).search);
 const names={full:'全程',pickup:'识别与抓放',channel:'超声波通道',parking:'终点停车'};
 const colors={red:'红块',yellow:'黄块',blue:'蓝块'};
 const required=['stage','mode','group','color','elapsed','wall_hits','sonar_triggers','falls'];
@@ -35,7 +36,7 @@ export function initTrials(send,incidents,help){
     const group=Math.round(Number(value('group')));
     return {stage:$('stage').value,group:Number.isSafeInteger(group)&&group>0?group:1,color:value('color')};
   };
-  let current,batch,completedEpoch,clipRevision,baseline=[],notice='';
+  let current,batch,completedEpoch,clipRevision,baseline=[],notice='',matrixSerial=0;
   const records=[];
   // Report JSON stays separate from replay JSON and browser-only lookup keys.
   const recordEpochs=new WeakMap();
@@ -50,6 +51,10 @@ export function initTrials(send,incidents,help){
       uses(r,'parking')?(r.aligned?'摆正':r.parked?'停稳':'未停稳')+(r.parking_angle_deg==null?'':'／'+r.parking_angle_deg+'°'):'—',
       r.elapsed.toFixed(2)+' s'];
     for(const item of items){const td=document.createElement('td');td.textContent=item;tr.append(td);}
+    for(const message of faultNotes(r)){
+      const note=document.createElement('small');note.className='fault-round-note';note.textContent=message;
+      tr.cells[1].append(note);
+    }
     const key=recordEpochs.get(r);
     if(key!==undefined&&incidents.hasRound(key)){
       const button=document.createElement('button');
@@ -87,10 +92,33 @@ export function initTrials(send,incidents,help){
       +(records.length?'当前 '+totals(records):'尚无记录')
       +(baseline.length?'；历史 '+totals(baseline):'');
   }
+  function showRegression(){
+    $('regression').hidden=!baseline.length;
+    if(!baseline.length)return;
+    const result=compareLatest(records,baseline);
+    $('regression-summary').textContent=result.message;
+    const rows=(result.rows||[]).map(({before,now,oldPassed,newPassed,regressions,improvements})=>{
+      const tr=document.createElement('tr');
+      const delta=[];
+      if(oldPassed&&!newPassed)delta.push('通过 → 未通过');
+      if(!oldPassed&&newPassed)delta.push('未通过 → 通过');
+      if(regressions.length)delta.push('退步：'+regressions.map(s=>names[s]).join('、'));
+      if(improvements.length)delta.push('改善：'+improvements.map(s=>names[s]).join('、'));
+      const labels=[names[now.stage]+' · '+scenario(now),firstUnmet(before),firstUnmet(now),delta.join('；')||'判定未变'];
+      for(const label of labels){
+        const cell=document.createElement('td');
+        cell.textContent=label;tr.append(cell);
+      }
+      if(oldPassed&&!newPassed||regressions.length)tr.cells[3].className='regression-bad';
+      return tr;
+    });
+    $('regression-rows').replaceChildren(...rows);
+  }
   function redraw(){
     clipRevision=incidents.revision;
     $('rows').replaceChildren(...[...records,...baseline].map(add));
     $('export').disabled=!records.length;
+    showRegression();
     updateProgress();
   }
   function abort(message,pause=false){
@@ -117,9 +145,14 @@ export function initTrials(send,incidents,help){
     else notice='';
     if(notice){updateProgress();return;}
     const plan={...settings(),limit:field('limit',1,180)};
+    if(kind==='matrix'){
+      try{plan.fault_plan=settingsFromPanel($,plan.limit,current.mode,Object.keys(current.sensors?.sonar||{}).length>0);}
+      catch(error){notice=error.message;updateProgress();return;}
+    }
     const cases=kind==='matrix'?[2,1].flatMap(group=>Object.keys(colors).map(color=>({...plan,group,color})))
       :Array.from({length:field('count',1,20)},()=>plan);
-    batch={kind,index:0,cases,label:$('label').value,mode:current.mode,session:current.panel_session};
+    batch={kind,index:0,cases,label:$('label').value,mode:current.mode,session:current.panel_session,
+      matrixSerial:kind==='matrix'?++matrixSerial:null};
     notice='';
     resetCase(current);
     updateProgress();
@@ -131,6 +164,7 @@ export function initTrials(send,incidents,help){
       row.suite='parity-colors';
       row.case_index=plan.index+1;
       row.limit_s=plan.cases[plan.index].limit;
+      row.matrix_run=plan.matrixSerial;
       row.first_unmet=firstUnmet(row);
     }
     recordEpochs.set(row,epoch);
@@ -151,6 +185,13 @@ export function initTrials(send,incidents,help){
   $('finish').onclick=()=>send('finish_round');
   $('batch').onclick=()=>startBatch('repeat');
   $('matrix').onclick=()=>startBatch('matrix');
+  function syncFaultInputs(){
+    for(const id of ['sonar-start','sonar-length'])$(id).disabled=!$('fault-sonar').checked;
+    for(const id of ['uart-start','uart-length'])$(id).disabled=!$('fault-uart').value;
+    $('uart-delay').disabled=$('fault-uart').value!=='delay';
+  }
+  $('fault-sonar').onchange=$('fault-uart').onchange=syncFaultInputs;
+  syncFaultInputs();
   $('export').onclick=()=>{
     const url=URL.createObjectURL(new Blob([JSON.stringify({format:'moonlight-trials',version:1,records},null,2)],{type:'application/json'}));
     const a=document.createElement('a');a.href=url;a.download='moonlight-trials.json';a.click();
@@ -169,6 +210,10 @@ export function initTrials(send,incidents,help){
     }catch(error){notice='无法打开对照报告：'+error.message;updateProgress();}
   };
   return {
+    pause(){
+      if(batch)abort('多轮已暂停；已完成的记录可以导出。',true);
+      else send('pause');
+    },
     receive(state,epoch){
       current=state;
       if(!state.trial)return;
@@ -186,6 +231,9 @@ export function initTrials(send,incidents,help){
       const plan=batch.cases[batch.index];
       if(state.trial.id!==batch.expected||['stage','group','color'].some(k=>state.trial[k]!==plan[k])){
         abort('摆位条件已改变，多轮已停止。');return;
+      }
+      if(batch.kind==='matrix'&&!samePlan(state.trial.fault_run?.plan,plan.fault_plan,plan.limit,batch.mode)){
+        abort('场景未确认本轮定时故障设置，固定工况已停止。',true);return;
       }
       if(state.round_error){
         if(batch.kind==='matrix'){

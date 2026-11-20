@@ -31,3 +31,11 @@ dialog#help-dialog::backdrop{background:#142c3d88}
 @media(max-width:540px){dialog#help-dialog{padding:14px}.help-head{align-items:center}.help-head button{flex:none}}
 @media(max-width:540px){.incident-view{grid-template-columns:minmax(0,1fr)}.incident-view .map-wrap{max-width:210px}}
 @media(max-width:720px){header{flex-wrap:wrap;gap:8px}header>.badge{display:inline-block}}
+.fault-plan{margin:8px 0 0;border:1px solid #dbe8ec;border-radius:7px;padding:8px 10px}
+.fault-plan .settings{margin:6px 0;gap:8px}
+.fault-plan input[type=checkbox]{width:auto;accent-color:#087e73;vertical-align:middle}
+.fault-plan p{line-height:1.6}
+.trial-regression{background:#f3f8f8;border:1px solid #dbe8ec;border-radius:7px;padding:6px 9px;margin:8px 0}
+.trial-regression p{margin:4px 0;line-height:1.6}
+.trial-regression td.regression-bad{color:#a02d2d;font-weight:700}
+.fault-round-note{display:block;margin-top:3px;color:#4b6773;font-size:10px;line-height:1.4}

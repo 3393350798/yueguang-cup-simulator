@@ -165,7 +165,7 @@ function render(data){
       label.textContent=deviceNames[name]||name;row.append(label,reading);$('sonars').append(row);
       sonarCells.set(name,reading);
     }
-    setText(sonarCells.get(name),(value*100).toFixed(1)+' cm');
+    setText(sonarCells.get(name),data.sensors.sonar_no_echo?'无回波（模拟）':(value*100).toFixed(1)+' cm');
   }
   for(const [i,value] of data.sensors.ir.entries()){
     if(!irCells[i]){
@@ -242,7 +242,8 @@ function paintMap(ctx,size,snapshot,route){
   }
 }
 draw();
-for(const id of ['start','pause','reload','snapshot','channel'])$(id).onclick=()=>send(id);
+for(const id of ['start','reload','snapshot','channel'])$(id).onclick=()=>send(id);
+$('pause').onclick=trials.pause;
 $('reset').onclick=()=>{path=[];mapDirty=true;send('reset',{group:Number($('group').value),color:$('color').value,stage:'full'});};
 $('mode').onchange=()=>{send('mode',{value:$('mode').value});$('mode-help').textContent=help[$('mode').value];};
 for(const button of document.querySelectorAll('[data-drive]')){

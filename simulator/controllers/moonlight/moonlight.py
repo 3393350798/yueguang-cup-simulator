@@ -1,6 +1,7 @@
 """Webots 场景桥接与练习面板。会员算法在 member_algorithm.py。"""
 from pathlib import Path
 import base64
+from hashlib import sha256
 import importlib.util
 import json
 import math
@@ -33,6 +34,7 @@ from imperfections import Imperfections
 from vision_link import VisionLink
 from physical_gripper import PhysicalGripper
 from stage_trial import StageTrial, STAGES
+from timed_faults import RoundFaults, parse_plan
 diagnostics.phase='scene_config'
 CONFIG=json.loads((ROOT/'scene.json').read_text(encoding='utf-8'))
 STEP=int(CONFIG.get('step_ms',32))
@@ -114,6 +116,7 @@ round_result=None
 ready_at=0
 round_limit=None
 round_error=None
+round_faults=None
 
 state=dict(mode='manual',running=False,group=2,color='red',carrying=False,
            elapsed=0.0,collision=False,grasped=False,placed=None,parked=False,aligned=False,
@@ -155,6 +158,10 @@ def report_error(error):
         incident_flags.add('member_error')
     elif diagnostics.phase=='actuator' and state['mode'] in ('member','firmware'):
         incident_flags.add(state['mode']+'_error')
+    if round_faults:
+        for kind in ('firmware_error','member_error'):
+            if kind in incident_flags:
+                round_faults.observe(kind,round_elapsed_ms(),pose())
     update_log_context()
     reason=diagnostic_reason(error) if diagnostics.phase.startswith('firmware_') else None
     line=None
@@ -191,6 +198,26 @@ try:
 except (OSError,UnicodeError,ValueError) as error:
     report_error(error)
     configured=False
+
+def scene_signature(firmware_config=None, firmware_board=None):
+    # Candidate firmware images and member code may differ between runs.
+    setup={key:value for key,value in (firmware_config or {}).items() if key not in ('image','renode')}
+    data=json.dumps([PROJECT_VERSION,CONFIG,setup,firmware_board],sort_keys=True,ensure_ascii=True,separators=(',',':'))
+    return sha256(data.encode('ascii')).hexdigest()
+
+
+member_scene_signature=scene_signature()
+
+
+def round_elapsed_ms():
+    return round(state['elapsed']*1000)
+
+
+def trial_report(position):
+    report=trial.report(state,position)
+    if round_faults:
+        report['fault_run']=round_faults.report()
+    return report
 
 
 def queue_uart(value, at=None):
@@ -274,11 +301,12 @@ def close_firmware(reason):
     firmware=None;firmware_status={}
 
 
-def reset(group=None,color=None,stage=None,limit=None):
+def reset(group=None,color=None,stage=None,limit=None,fault_plan=None):
     global still,last_encoder,algorithm,effects
     global trace_epoch,trace_start
-    global trial,round_id,round_result,ready_at,last_collision_time,round_limit,round_error
+    global trial,round_id,round_result,ready_at,last_collision_time,round_limit,round_error,round_faults
     diagnostics.phase='round_reset'
+    plan=None if fault_plan is None else parse_plan(fault_plan,limit,state['mode'],bool(sonar))
     close_firmware('reset')
     effects=Imperfections(HW.get('imperfections',{}))
     trace_epoch+=1
@@ -292,6 +320,7 @@ def reset(group=None,color=None,stage=None,limit=None):
     round_result=None
     round_error=None
     round_limit=max(1,min(180,float(limit))) if limit is not None else None
+    round_faults=RoundFaults(plan,member_scene_signature if state['mode']=='member' else None) if plan is not None else None
     ready_at=sim.getTime()+.8
     last_collision_time=-10
     car.loadState('practice-ready')
@@ -323,7 +352,7 @@ def finish_round(reason):
         return
     state['running']=False
     manual[:]=[0,0]
-    round_result=dict(trial.report(state,pose()),id=round_id,reason=reason)
+    round_result=dict(trial_report(pose()),id=round_id,reason=reason)
     log('本轮结果已记录')
     previous_phase=diagnostics.phase
     diagnostics.phase='round_end'
@@ -332,7 +361,7 @@ def finish_round(reason):
 
 
 def receive(message):
-    global algorithm,firmware,round_error,effects
+    global algorithm,firmware,round_error,effects,round_faults
     data=json.loads(message)
     command=data.get('command')
     if command=='start':
@@ -347,7 +376,15 @@ def receive(message):
         if state['mode']=='firmware' and firmware is None:
             diagnostics.phase='firmware_start'
             record('firmware_start_requested')
-            firmware=FirmwareBridge()
+            if round_faults:
+                # Hash the exact runtime setup passed to Renode, including live
+                # edits made after the Webots scene was generated.
+                settings=json.loads((ROOT/'firmware.json').read_text(encoding='utf-8-sig'))
+                board=json.loads((ROOT/'board.json').read_text(encoding='utf-8-sig'))
+                round_faults.signature=scene_signature(settings,board)
+                firmware=FirmwareBridge(settings,board)
+            else:
+                firmware=FirmwareBridge()
             log('STM32固件已加载，开始同步执行')
             record('firmware_started')
             diagnostics.phase='panel_start'
@@ -361,7 +398,8 @@ def receive(message):
         if state['running']:
             record('run_paused',reason='manual',firmware_active=firmware is not None)
         state['running']=False;manual[:]=[0,0]
-    elif command=='reset':reset(data.get('group'),data.get('color'),data.get('stage'),data.get('limit'))
+        round_faults=None
+    elif command=='reset':reset(data.get('group'),data.get('color'),data.get('stage'),data.get('limit'),data.get('fault_plan'))
     elif command=='finish_round':
         finish_round('manual')
     elif command=='mode':
@@ -370,6 +408,7 @@ def receive(message):
             raise ValueError('未知的控制模式。')
         close_firmware('switch_mode')
         effects.queue.clear()
+        round_faults=None
         state['mode']=data['value'];state['running']=False;manual[:]=[0,0]
         record('mode_changed')
         if state['mode'] in ('member','firmware'):
@@ -380,6 +419,7 @@ def receive(message):
         algorithm=load_algorithm()
         close_firmware('reload')
         effects.queue.clear()
+        round_faults=None
         state['running']=False
         log('程序已重载；点击开始运行，固件将从复位状态执行')
     elif command=='uart':queue_uart(data['value'])
@@ -392,6 +432,7 @@ def receive(message):
         if firmware:
             close_firmware('manual_override');effects.queue.clear()
         previous_mode=state['mode']
+        round_faults=None
         manual[:]=data['value'];state['running']=True;state['mode']='manual'
         if previous_mode!='manual':
             record('mode_changed',reason='manual_override')
@@ -487,6 +528,11 @@ while sim.step(STEP)!=-1:
                  speed=dict(zip(('left','right'),wheel_speed)),
                  joints={name:sensor.getValue() for name,sensor in joint_sensors.items()},
                  carrying=state['carrying'],vision={})
+    sonar_fault=bool(round_faults and state['running'] and round_faults.sample_sonar(round_elapsed_ms()))
+    if sonar_fault:
+        # Keep existing numeric max-range convention for Python member programs.
+        sensors['sonar']={key:HW['sonar']['range_mm']/1000 for key in sensors['sonar']}
+        sensors['sonar_no_echo']=True
     command=dict(left=0,right=0)
     pwm,uart_in,uart_out=None,[],[]
     if state['running']:
@@ -503,8 +549,13 @@ while sim.step(STEP)!=-1:
                 # UART input waits for the next MCU sampling boundary.
                 diagnostics.phase='firmware_step'
                 uart_data=effects.receive(cycle_start)
+                if round_faults:
+                    uart_data=round_faults.virtual_uart_input(round(cycle_start*1000),uart_data)
                 uart_in=list(uart_data)
-                firmware_status=firmware.step(sensors,DT,uart_data)
+                # The Renode sonar emits an echo for 0.02..4.0 meters. 0 is
+                # reserved here for no pulse; the Python/UI view stays at max range.
+                firmware_sensors=dict(sensors,sonar={key:0 for key in sensors['sonar']}) if sonar_fault else sensors
+                firmware_status=firmware.step(firmware_sensors,DT,uart_data)
                 firmware_status['uart_dropped']=effects.dropped
                 pwm=[firmware_status[side] for side in ('left','right')]
                 uart_out=firmware_status['uart']
@@ -557,6 +608,8 @@ while sim.step(STEP)!=-1:
         if not state['collision']:
             incident_flags.add('wall_contact')
             record('wall_contact',stage=trial.stage)
+            if round_faults and state['running']:
+                round_faults.observe('wall_contact',round_elapsed_ms(),p)
         state['collision']=True
         if state['elapsed']-last_collision_time>1:
             log('超声波区域发生接触');last_collision_time=state['elapsed']
@@ -566,6 +619,8 @@ while sim.step(STEP)!=-1:
         trial.update(p,grasp,wall_contact,firmware_status.get('sonar_triggers',0))
         if trial.falls>previous_falls:
             incident_flags.add('block_dropped')
+            if round_faults:
+                round_faults.observe('block_dropped',round_elapsed_ms(),p)
     if state['running'] and round_limit is not None and state['elapsed']+1e-9>=round_limit:
         finish_round('time')
     block_pose=block.getPosition()
@@ -586,7 +641,7 @@ while sim.step(STEP)!=-1:
         payload=dict(state,sensors=sensors,pose=p,firmware=firmware_status,panel_session=panel_session,panel_tick=tick,
                      project_version=PROJECT_VERSION,
                      trace=trace,trace_epoch=trace_epoch,rate=panel_rate,claw=grasp,block_position=block_pose,
-                     trial=dict(trial.report(state,p),id=round_id),round_result=round_result,
+                     trial=dict(trial_report(p),id=round_id),round_result=round_result,
                      resetting=sim.getTime()<ready_at,round_error=round_error,
                      target_side='left' if state['group']%2==0 else 'right')
         if panel_image is not None:payload['image']=panel_image

@@ -17,6 +17,30 @@ const verdicts=[
   '停车：未停稳','停车：未摆正','适用检查均通过'
 ];
 
+function faultSummary(run){
+  if(run?.version!==1)return undefined;
+  const window=value=>{
+    const start=integer(value?.start_ms,0,180000),duration=integer(value?.duration_ms,64,180000);
+    return start===null||duration===null||start+duration>180000?null:{start_ms:start,duration_ms:duration};
+  };
+  const sonar=window(run.plan?.sonar), uart=window(run.plan?.uart);
+  const action=enumValue(run.plan?.uart?.action,['drop','delay']);
+  const delay=integer(run.plan?.uart?.delay_ms,1,3000);
+  const event=enumValue(run.first_event?.kind,Object.keys(marks));
+  return {
+    sonar:sonar?{...sonar,first_ms:integer(run.sonar_first_ms,0,180000),
+      sampled_cycles:integer(run.sonar_samples,0,180000)}:null,
+    uart:uart&&action&&(action!=='delay'||delay!==null)?{...uart,action,
+      ...(action==='delay'?{delay_ms:delay}:{}),first_ms:integer(run.uart_first_ms,0,180000),
+      affected_bytes:integer(run.uart_affected_bytes,0,Number.MAX_SAFE_INTEGER),
+      dropped_bytes:integer(run.uart_dropped_bytes,0,Number.MAX_SAFE_INTEGER),
+      overflow_bytes:integer(run.uart_overflow_bytes,0,Number.MAX_SAFE_INTEGER),
+      pending_bytes:integer(run.uart_pending_bytes,0,65536)}:null,
+    first_event:event?{kind:event,elapsed_ms:integer(run.first_event.elapsed_ms,0,180032),
+      position_mm:pair(run.first_event.position_mm,-10000,10000)}:null,
+  };
+}
+
 function captureRound(config,row,state,verdict){
   const rig=config.robot, board=config.board, env=row.environment||{};
   const mode=enumValue(row.mode,Object.keys(modes));
@@ -34,6 +58,7 @@ function captureRound(config,row,state,verdict){
       physics_step_ms:enumValue(config.physics_step_ms,[4,8,16,32]),
       suite:enumValue(row.suite,['parity-colors']),case_index:integer(row.case_index,1,6),
       limit_s:integer(row.limit_s,1,180),
+      timed_faults:faultSummary(row.fault_run),
     },
     configuration:{
       robot_kind:enumValue(rig.model?.kind??'parametric',['parametric','urdf','mesh']),
