@@ -31,8 +31,8 @@
   },
   "caster": {"x_mm": -55, "radius_mm": 13},
   "camera": {
-    "position_mm": [50, 0, 75],
-    "pitch_deg": 8.6,
+    "position_mm": [20, 0, 138],
+    "pitch_deg": 22,
     "yaw_deg": 0,
     "width": 320,
     "height": 240,

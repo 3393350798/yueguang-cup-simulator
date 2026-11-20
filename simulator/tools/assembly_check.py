@@ -1,9 +1,9 @@
 """在独立 Webots 场景中检查当前车模的装配方向、感知和夹爪行程。"""
 import argparse
 from collections import Counter
+import csv
 from pathlib import Path
 import json
-import math
 import os
 import shutil
 import socket
@@ -13,11 +13,12 @@ import tempfile
 import time
 import xml.etree.ElementTree as ET
 
-from gripper_bench import TOOLS, find_webots, read_json, snapshot_file, stop_webots, write_json
+from gripper_bench import TOOLS, find_webots, number, read_json, snapshot_file, stop_webots, write_json
 
 
 SOURCE = Path(__file__).resolve().parents[1]
 STATUSES = {'pass': '符合', 'review': '需核对', 'unobserved': '未观测'}
+DEFAULT_DISTANCES = '250,350,550'
 MARKER = '''
 DEF ASSEMBLY_TARGET Solid {
   name "Assembly reference"
@@ -45,7 +46,7 @@ def copy_asset(root, dest, reference):
     return copied
 
 
-def build_snapshot(root, dest, target_mm, report_dir):
+def snapshot_project(root, dest):
     robot = read_json(root/'robot.json')
     board_path = root/'board.json'
     board = read_json(board_path) if board_path.is_file() else {}
@@ -56,11 +57,6 @@ def build_snapshot(root, dest, target_mm, report_dir):
     board = {key: board[key] for key in ('model', 'position_mm') if key in board}
     write_json(dest/'robot.json', robot)
     write_json(dest/'board.json', board)
-    (dest/'assets').mkdir()
-    shutil.copyfile(SOURCE/'assets'/'competition_field.json', dest/'assets'/'competition_field.json')
-    (dest/'tools').mkdir()
-    for name in TOOLS:
-        shutil.copyfile(SOURCE/'tools'/name, dest/'tools'/name)
     model = robot.get('model', {})
     if model.get('kind') in ('urdf', 'mesh'):
         relative = Path(model['source'])
@@ -71,6 +67,19 @@ def build_snapshot(root, dest, target_mm, report_dir):
     if board.get('model'):
         copy_asset(root, dest, board['model']['source'])
 
+
+def build_snapshot(dest, distances, candidate, report_dir):
+    if candidate:
+        robot_path = dest/'robot.json'
+        robot = read_json(robot_path)
+        robot['camera'].update(candidate)
+        write_json(robot_path, robot)
+    (dest/'assets').mkdir()
+    shutil.copyfile(SOURCE/'assets'/'competition_field.json', dest/'assets'/'competition_field.json')
+    (dest/'tools').mkdir()
+    for name in TOOLS:
+        shutil.copyfile(SOURCE/'tools'/name, dest/'tools'/name)
+
     builder = subprocess.run([sys.executable, str(dest/'tools'/'build_scene.py')], cwd=dest,
                              capture_output=True, timeout=45, check=False)
     (report_dir/'build.log').write_bytes(builder.stdout+builder.stderr)
@@ -78,7 +87,7 @@ def build_snapshot(root, dest, target_mm, report_dir):
         raise RuntimeError('无法生成装配体检场景。请先核对车轮绑定、关节限位和模型引用。日志：'+str(report_dir))
 
     scene = read_json(dest/'scene.json')
-    write_json(dest/'assembly_settings.json', {'target_distance_mm': target_mm})
+    write_json(dest/'assembly_settings.json', {'target_distances_mm': distances, 'camera_only': bool(candidate)})
     controller = dest/'controllers'/'assembly_probe'
     controller.mkdir(parents=True)
     shutil.copyfile(SOURCE/'controllers'/'assembly_probe'/'assembly_probe.py', controller/'assembly_probe.py')
@@ -120,19 +129,39 @@ def choose_port(requested):
         return probe.getsockname()[1]
 
 
-def run_check(options, root=SOURCE, on_status=print, cancelled=lambda: False):
-    webots = find_webots(options.webots_home)
-    target_mm = float(options.target_mm)
-    if not math.isfinite(target_mm) or not 150 <= target_mm <= 1000:
-        raise ValueError('标靶离车体原点应为 150～1000 mm。')
+def split_numbers(value):
+    if isinstance(value, str):
+        return [part.strip() for part in value.replace('，',',').split(',')]
+    return value
+
+
+def target_distances(options):
+    single = getattr(options, 'target_mm', None)
+    values = [single] if single is not None else split_numbers(getattr(options, 'distances', DEFAULT_DISTANCES))
+    if not 1 <= len(values) <= 5:
+        raise ValueError('请输入 1～5 个以逗号分隔的标靶距离。')
+    return list(dict.fromkeys(number(item,150,1000,'标靶离车体原点（mm）') for item in values))
+
+
+def camera_pose(values):
+    if not values or (isinstance(values, str) and not values.strip()):
+        return None
+    values = split_numbers(values)
+    if len(values) != 4:
+        raise ValueError('候选相机请输入 X,Y,Z,俯角 四项，逗号分隔。')
+    return dict(position_mm=[number(v,-2000,2000,label+'（mm）') for label,v in zip(('X','Y','Z'),values[:3])],
+                pitch_deg=number(values[3],-90,90,'俯角（°）'))
+
+
+def run_probe(options, snapshot, distances, candidate, report_dir, webots, on_status, cancelled):
+    if cancelled():
+        raise RuntimeError('已取消体检。')
     port = choose_port(options.port)
-    output = SOURCE.parent/'output'
-    output.mkdir(exist_ok=True)
-    report_dir = Path(tempfile.mkdtemp(prefix='assembly-check-', dir=output))
-    with tempfile.TemporaryDirectory(prefix='.assembly-scene-', dir=output) as tmp:
+    with tempfile.TemporaryDirectory(prefix='.assembly-scene-', dir=snapshot.parent) as tmp:
         dest = Path(tmp)
         on_status('正在生成隔离场景和车模副本…')
-        world = build_snapshot(root.resolve(), dest, target_mm, report_dir)
+        shutil.copytree(snapshot, dest, dirs_exist_ok=True)
+        world = build_snapshot(dest, distances, candidate, report_dir)
         if cancelled():
             raise RuntimeError('已取消体检。')
         env = dict(os.environ, PYTHONUTF8='1', PYTHONUNBUFFERED='1', YUEGUANG_PYTHON=sys.executable)
@@ -176,13 +205,69 @@ def run_check(options, root=SOURCE, on_status=print, cancelled=lambda: False):
         report = read_json(result)
         if 'error' in report:
             raise RuntimeError(report['error']+'（本机日志：'+str(report_dir)+'）')
-        if report.get('format') != 'moonlight-assembly-check' or report.get('version') != 1:
+        if report.get('format') != 'moonlight-assembly-check' or report.get('version') != 2:
             raise RuntimeError('装配体检报告格式不符。')
-        for name in ('camera-center.png', 'camera-left.png', 'camera-right.png', 'camera-empty.png'):
-            if (dest/name).is_file():
-                shutil.copyfile(dest/name, report_dir/name)
-        write_json(report_dir/'report.json', report)
-    return report_dir, report
+        for path in dest.glob('camera-*.png'):
+            shutil.copyfile(path, report_dir/path.name)
+    return report
+
+
+def write_camera_table(folder, report):
+    mounts = report['camera_mounts']
+    with (folder/'camera-comparison.csv').open('w', encoding='utf-8-sig', newline='') as out:
+        table = csv.writer(out)
+        table.writerow(['方案','安装 X (mm)','安装 Y (mm)','安装 Z (mm)','向下俯角 (°)',
+                        '夹爪姿态','距离 (mm)','标靶位置','结果','可见像素','像素贴边','图片'])
+        for row in report['checks']:
+            obs = row['observed']
+            if 'target_slot' not in obs:
+                continue
+            variant = obs['camera_variant']
+            mount = mounts[variant]
+            table.writerow(['已保存' if variant == 'saved' else '候选', *mount['position_mm'], mount['pitch_deg'],
+                            {'low':'低位','high':'高位','fixed':'固定高度'}[obs['lift_stage']],
+                            obs['target_position_mm'][0], {'center':'中央','left':'左侧','right':'右侧'}[obs['target_slot']],
+                            STATUSES[row['status']], obs['visible_px'],
+                            {None:'', True:'是', False:'否'}[obs['touches_frame_edge']], obs['frame']])
+
+
+def run_check(options, root=SOURCE, on_status=print, cancelled=lambda: False):
+    distances = target_distances(options)
+    candidate = camera_pose(getattr(options, 'camera_pose', None))
+    webots = find_webots(options.webots_home)
+    output = SOURCE.parent/'output'
+    output.mkdir(exist_ok=True)
+    folder = Path(tempfile.mkdtemp(prefix='assembly-check-', dir=output))
+    with tempfile.TemporaryDirectory(prefix='.assembly-input-', dir=output) as tmp:
+        snapshot = Path(tmp)
+        on_status('正在复制当前工程中已保存的车模…')
+        snapshot_project(root.resolve(), snapshot)
+        report = run_probe(options, snapshot, distances, None, folder, webots, on_status, cancelled)
+        trial = None
+        if candidate:
+            on_status('使用相同车模，正在体检候选相机位置…')
+            candidate_dir = folder/'candidate'
+            candidate_dir.mkdir()
+            trial = run_probe(options, snapshot, distances, candidate, candidate_dir, webots, on_status, cancelled)
+    report['target_distances_mm'] = distances
+    report['camera_mounts'] = {'saved':report.pop('camera_mount')}
+    for row in report['checks']:
+        if row['item'].startswith('camera'):
+            row['observed']['camera_variant'] = 'saved'
+    if trial:
+        report['camera_mounts']['candidate'] = trial['camera_mount']
+        for row in trial['checks']:
+            row['item'] = 'candidate_'+row['item']
+            row['label'] = '候选 · '+row['label']
+            obs = row['observed']
+            obs['camera_variant'] = 'candidate'
+            for key in ('frame', 'empty_frame'):
+                if obs.get(key):
+                    obs[key] = 'candidate/'+obs[key]
+        report['checks'].extend(trial['checks'])
+    write_json(folder/'report.json', report)
+    write_camera_table(folder, report)
+    return folder, report
 
 
 def summary(report):
@@ -202,26 +287,30 @@ def gui(options):
     main = ttk.Frame(window, padding=14)
     main.pack(fill='both', expand=True)
     main.columnconfigure(1, weight=1)
-    main.rowconfigure(5, weight=1)
+    main.rowconfigure(6, weight=1)
     status = tk.StringVar(value='按下开始后，在独立 Webots 场景测试当前工程的车模。')
     home = tk.StringVar(value=options.webots_home)
-    target = tk.StringVar(value=f'{options.target_mm:g}')
+    target = tk.StringVar(value=','.join(f'{d:g}' for d in target_distances(options)))
+    candidate_pose = tk.StringVar(value=','.join(f'{v:g}' for v in (options.camera_pose or [])))
     show = tk.BooleanVar(value=options.show)
     ttk.Label(main, text='Webots 安装目录（留空自动找）').grid(row=0, column=0, padx=(0, 10), sticky='w')
     ttk.Entry(main, textvariable=home).grid(row=0, column=1, sticky='ew')
     ttk.Button(main, text='选择…', command=lambda: (path:=filedialog.askdirectory()) and home.set(path)).grid(
         row=0, column=2, padx=(8, 0), sticky='ew')
-    ttk.Label(main, text='标靶离车体原点（mm）').grid(row=1, column=0, sticky='w', pady=6)
-    ttk.Entry(main, textvariable=target, width=12).grid(row=1, column=1, sticky='w')
+    ttk.Label(main, text='标靶距离（mm，逗号分隔）').grid(row=1, column=0, sticky='w', pady=6)
+    ttk.Entry(main, textvariable=target, width=28).grid(row=1, column=1, sticky='w')
     ttk.Checkbutton(main, text='显示 Webots 场景', variable=show).grid(row=1, column=2, sticky='e')
+    ttk.Label(main, text='候选相机 X,Y,Z（mm）,俯角（°）').grid(row=2, column=0, sticky='w', pady=6)
+    ttk.Entry(main, textvariable=candidate_pose).grid(row=2, column=1, sticky='ew')
+    ttk.Label(main, text='选填，不修改项目').grid(row=2, column=2, sticky='w', padx=(8,0))
     actions = ttk.Frame(main)
-    actions.grid(row=3, column=0, columnspan=3, pady=(3, 10), sticky='ew')
-    ttk.Label(main, textvariable=status, wraplength=740).grid(row=4, column=0, columnspan=3, pady=(0, 8), sticky='w')
+    actions.grid(row=4, column=0, columnspan=3, pady=(3, 10), sticky='ew')
+    ttk.Label(main, textvariable=status, wraplength=740).grid(row=5, column=0, columnspan=3, pady=(0, 8), sticky='w')
     frame = ttk.Frame(main)
-    frame.grid(row=5, column=0, columnspan=3, sticky='nsew')
+    frame.grid(row=6, column=0, columnspan=3, sticky='nsew')
     frame.columnconfigure(0, weight=1)
     frame.rowconfigure(0, weight=1)
-    cols = [('item', '检查项', 145), ('status', '结果', 75), ('detail', '观测和建议', 515)]
+    cols = [('item', '检查项', 175), ('status', '结果', 75), ('detail', '观测和建议', 515)]
     table = ttk.Treeview(frame, columns=[c[0] for c in cols], show='headings', selectmode='browse')
     table.grid(row=0, column=0, sticky='nsew')
     for key, label, width in cols:
@@ -266,7 +355,8 @@ def gui(options):
 
     def launch():
         nonlocal pending, result_path
-        chosen = argparse.Namespace(webots_home=home.get(), port=options.port, show=show.get(), target_mm=target.get())
+        chosen = argparse.Namespace(webots_home=home.get(), port=options.port, show=show.get(),
+                                    distances=target.get(), camera_pose=candidate_pose.get())
         pending = True
         result_path = None
         cancel_event.clear()
@@ -322,7 +412,11 @@ def main(argv=None):
     parser.add_argument('--webots-home', default='', help='Webots 安装目录')
     parser.add_argument('--show', action='store_true', help='显示 Webots 场景')
     parser.add_argument('--port', type=int, default=0, help='独立 Webots 端口，0 自动分配')
-    parser.add_argument('--target-mm', type=float, default=350, help='标靶离车体原点的前向距离，150～1000 mm')
+    distances = parser.add_mutually_exclusive_group()
+    distances.add_argument('--target-mm', type=float, help='只测指定的单一距离，150～1000 mm')
+    distances.add_argument('--distances', default=DEFAULT_DISTANCES, help='标靶距离（mm，逗号分隔）')
+    parser.add_argument('--camera-pose', type=float, nargs=4, metavar=('X','Y','Z','俯角'),
+                        help='用临时副本再体检候选相机，输入毫米与角度')
     options = parser.parse_args(argv)
     if not 0 <= options.port <= 65535:
         parser.error('端口须在 0～65535 之间。')

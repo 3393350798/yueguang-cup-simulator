@@ -37,6 +37,7 @@ class Source:
     samples: list
     unspecified: int
     unknown: int
+    case_samples: dict | None = None
 
 
 def bounded(path, size):
@@ -112,10 +113,11 @@ def mapping_for(headers, supplied):
             column(case_id) if case_id is not None else None, events, signals)
 
 
-def load_source(path, role, mapping=None):
+def load_source(path, role, mapping=None, *, retain_case_samples=False):
     if role not in SOURCE_LABELS:
         raise ValueError('记录来源应是 pc、openmv 或 stm32。')
     timestamps, events, samples = [], [], []
+    case_samples = {} if retain_case_samples else None
     unspecified = unknown = 0
     first = previous = None
     with bounded(path, MAX_FILE).open(encoding='utf-8-sig', newline='') as stream:
@@ -177,6 +179,10 @@ def load_source(path, role, mapping=None):
                                 raise ValueError(f'{name}换算后不在 {lo:g} 到 {hi:g} 内。')
                             value = min(hi, max(lo, value))
                         values[name] = value
+                    if case_samples is not None and event == 'sample' and id_col is not None and values:
+                        ident = row[id_col].strip()
+                        if IDENTIFIER.fullmatch(ident):
+                            case_samples.setdefault(ident, []).append((elapsed, values.copy()))
                     if values or (event == 'sample' and signals) or (ev_col is None and signals):
                         if samples and samples[-1][0] == elapsed:
                             merged = samples[-1][1]
@@ -191,7 +197,7 @@ def load_source(path, role, mapping=None):
             raise ValueError('请输入 UTF-8 编码的逗号分隔 CSV。') from error
     if not timestamps:
         raise ValueError('CSV 没有录制行。')
-    return Source(role, timestamps, events, samples, unspecified, unknown)
+    return Source(role, timestamps, events, samples, unspecified, unknown, case_samples)
 
 
 def seconds(value):

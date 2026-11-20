@@ -7,14 +7,14 @@
 ## 开始使用
 
 1. 安装 [Webots R2025a](https://github.com/cyberbotics/webots/releases/tag/R2025a) 和 [Python 3.11～3.13](https://www.python.org/downloads/)。安装 Python 时选择加入 PATH。
-2. [下载 v0.10.0 ZIP](https://github.com/3393350798/yueguang-cup-simulator/releases/download/v0.10.0/yueguang-cup-simulator-v0.10.0.zip) 并解压。在 Windows 下，双击 `setup.bat`，等待 Python 环境与依赖安装完毕，再关闭窗口。
+2. [下载 v0.11.0 ZIP](https://github.com/3393350798/yueguang-cup-simulator/releases/download/v0.11.0/yueguang-cup-simulator-v0.11.0.zip) 并解压。在 Windows 下，双击 `setup.bat`，等待 Python 环境与依赖安装完毕，再关闭窗口。
 3. 双击 `start.bat`，等待 Webots 加载赛场，脚本会自动打开中文浏览器面板。
 4. 可先使用「手动探索」查看场景和传感器；编写程序后选择「会员算法」，点击「重载算法」和「开始运行」。
 
 已有旧队伍工程时，先把新版解压到单独目录，再从新版运行 `scripts/upgrade-project.bat`，预览并迁移到新目录。见 [项目升级](docs/项目升级.md)。需要导入 STEP 时，双击 `scripts/setup-cad.bat` 安装转换组件；需要执行 STM32 固件时，运行 `scripts/setup-firmware.bat` 安装 Renode 后端。
 
 启动遇到问题时，双击 `scripts/check-setup.bat`，按队伍接入方式运行[启动自检](docs/启动自检.md)。
-实体 STM32 串口联调遇到问题时，运行 `scripts/check-serial.bat`，见[实车串口自检](docs/实车串口自检.md)。需要查看视觉和串口的事件先后时，可用[实车录制与联调](docs/实车录制与联调.md)。
+实体 STM32 串口联调遇到问题时，运行 `scripts/check-serial.bat`，见[实车串口自检](docs/实车串口自检.md)。首次走通视觉到 STM32 的链路时，按[真机验收](docs/真机验收.md)记录各环节，再用[实车录制与联调](docs/实车录制与联调.md)定位故障。
 练习中某一轮出问题时，先记录结果，再从该行导出[本轮求助包](docs/求助包.md)。如果面板打不开，也可双击 `scripts/export-diagnostics.bat` 导出[故障诊断](docs/故障诊断.md)，和你遇到的现象一起发给负责人。
 
 启动前关闭旧的同项目 Webots 窗口。Webots 和浏览器需要同时保持打开。项目支持中文目录，Windows 启动脚本会从安装信息或 `WEBOTS_HOME` 查找 Webots。自定义安装位置可在项目目录执行：
@@ -39,12 +39,13 @@ sh start.sh
 
 - **自定义小车**：在 `scripts/import-hardware.bat` 中调整底盘、车轮与仿真步长，并在坐标图中摆放红外、超声波和相机。也可用 `scripts/configure.bat` 直接编辑参数，详见 [自定义小车](docs/自定义小车.md)。
 - **机械模型导入**：双击 `scripts/import-hardware.bat`，导入 URDF/ZIP 装配包并绑定左右轮，也可导入 STEP/STL/OBJ 底盘几何。额外关节可在面板手动设置目标位置，或由自己的程序控制，详见 [导入自己的硬件](docs/导入自己的硬件.md)。
-- **装配体检**：双击 `scripts/assembly-check.bat`，在独立场景检查轮向、传感器视野和夹爪动作，见 [装配体检](docs/装配体检.md)。
+- **装配体检**：双击 `scripts/assembly-check.bat`，在独立场景检查轮向、传感器视野和夹爪动作；可以比较不同相机位置和俯仰角下的遮挡。新版发行包的默认车采用重新验证过的相机位置，迁移旧工程时保留队伍自己的设置。见 [装配体检](docs/装配体检.md)。
 - **嘉立创EDA资料导入**：导入标准版或专业版导出的 PADS 9.5 网表，查看器件和网络，在 STM32F103C8T6 封装图中选脚并连接设备；板卡 STEP/STL 可放到车上。
 - **STM32 固件执行**：Renode 执行自己的 ELF/AXF/HEX/BIN，支持 PWM、AB 编码器、红外 ADC1 扫描及 DMA、超声波回波、USART 和夹爪开合、升降信号。通过 HAL 和标准外设库样件验证的功能、时钟配置和范围见 [固件执行](docs/固件执行.md)。
 - **STM32 外设测试台**：双击 `scripts/firmware-bench.bat`，给自己的固件输入已知的传感器信号或队伍协议帧，观察实际输出。见 [固件测试台](docs/固件测试台.md)。
 - **调试与联调**：录制、导出和回放 PWM、轮速、编码器、红外、超声波、串口；向本机电脑程序提供无损相机帧和双向二进制串口。可调电机、传感器、灯光和通讯扰动，见 [调试与联调](docs/调试与联调.md)。
 - **视觉样本回放**：双击 `scripts/vision-replay.bat`，用同一组场景原图和正确标签检验自己的识别结果。见 [视觉样本回放](docs/视觉样本回放.md)。
+- **视觉连续帧回放**：双击 `scripts/vision-sequence.bat`，把同一组图像按正常、掉帧、停帧和恢复的时间表送给自己的程序，或导出到本机做离线测试。见 [视觉连续帧回放](docs/视觉连续帧回放.md)。
 - **失败回放**：在练习面板回看碰撞、意外掉块和程序错误前后的位姿、夹爪状态与波形，见 [失败回放](docs/失败回放.md)。
 - **夹爪测试台**：用同一组物块偏移、角度和摩擦对照夹爪设计，见 [夹爪测试台](docs/夹爪测试台.md)。
 - **队伍项目**：在 `scripts/team-project.bat` 将当前小车、接线、固件与自编程序保存为本地 ZIP，也可从 ZIP 创建独立练习目录，见 [队伍项目](docs/队伍项目.md)。
@@ -59,6 +60,7 @@ sh start.sh
 - **标定与实车迁移**：用实测电机、测距、红外和编码器数据校准虚拟小车；电脑端使用相同的字节接口切换本机仿真串口和真实 COM 口，见 [标定与实车迁移](docs/标定与实车迁移.md)。
 - **实车波形对照**：打开 `scripts/telemetry-compare.bat`，将实车 CSV 与仿真波形按动作时刻对齐，比较电机和传感器读数，见 [实车波形对照](docs/实车波形对照.md)。
 - **实车录制与时间线**：打开 `scripts/telemetry-record.bat`，整理队伍日志，查看视觉与串口事件的时间线，导出波形工具可读的 CSV，见 [实车录制与联调](docs/实车录制与联调.md)。
+- **真机验收**：用 `scripts/field-acceptance.bat` 核对取帧、识别、串口收发和实际运动的记录。支持 OpenMV 直连和手机串流经电脑及无线串口两种方案，见 [真机验收](docs/真机验收.md)。
 
 组号偶数对应 AprilTag ID 0 和左侧目标（地图下排），奇数对应 ID 1 和右侧目标（上排）。物块为红、黄、蓝三种颜色，每轮一个，选择后重置生效。
 

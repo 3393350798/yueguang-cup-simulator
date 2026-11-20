@@ -57,11 +57,11 @@ export default {
     },
     "camera": {
       "position_mm": [
-        50,
+        20,
         0,
-        75
+        138
       ],
-      "pitch_deg": 8.6,
+      "pitch_deg": 22,
       "yaw_deg": 0,
       "width": 320,
       "height": 240,

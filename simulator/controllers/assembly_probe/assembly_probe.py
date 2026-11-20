@@ -158,13 +158,52 @@ def ir_test(bench, positions):
     return results
 
 
-def camera_test(bench, distance, floor_z):
+def gripper_devices(bench, config):
+    joints = config['jaws'] + ([config['lift']] if config['lift'] else [])
+    motors = {entry['joint']: bench.sim.getDevice(entry['joint']) for entry in joints}
+    sensors = {name: motor.getPositionSensor() if motor else None for name, motor in motors.items()}
+    for sensor in sensors.values():
+        if sensor:
+            sensor.enable(bench.step)
+    bench.advance(.15)
+    return joints, motors, sensors
+
+
+def move_gripper(bench, joints, motors, sensors, goals, observe=None):
+    duration = .65
+    for name, target in goals.items():
+        motor, sensor = motors[name], sensors[name]
+        if not motor:
+            continue
+        speed = motor.getMaxVelocity()
+        if not math.isfinite(speed) or speed <= 0:
+            continue
+        motor.setVelocity(speed)
+        motor.setPosition(target)
+        current = sensor.getValue() if sensor else math.nan
+        if math.isfinite(current):
+            duration = max(duration, abs(target-current)/speed+.45)
+    bench.advance(duration, observe, max_seconds=10)
+    results = []
+    for name, target in goals.items():
+        motor, sensor = motors[name], sensors[name]
+        value = sensor.getValue() if sensor else math.nan
+        row = next(entry for entry in joints if entry['joint'] == name)
+        span = abs(row['open']-row['closed']) if 'open' in row else abs(row['raise']-row['lower'])
+        tolerance = max(.0005, span*.06)
+        state = ('unobserved' if not math.isfinite(value) or not motor else
+                 'pass' if abs(value-target)<=tolerance else 'unobserved' if duration>10 else 'review')
+        results.append(dict(joint=name, target=finite(target), measured=finite(value), status=state,
+                            tolerance=finite(tolerance), unit='m' if motor and motor.getType()==motor.LINEAR else 'rad'))
+    return results
+
+
+def camera_test(bench, distances, floor_z, config):
     sim = bench.sim
     bench.reset()
     cam = sim.getDevice('camera')
     if not cam:
         return [check('camera', '相机标靶', 'unobserved', '当前车模未绑定相机。')]
-    cam.enable(bench.step)
     target = sim.getFromDef('ASSEMBLY_TARGET').getField('translation')
     width, height = cam.getWidth(), cam.getHeight()
 
@@ -177,38 +216,58 @@ def camera_test(bench, distance, floor_z):
         img.save(ROOT/filename)
         return np.asarray(img, dtype=np.int16)
 
-    before = capture('camera-empty.png')
-    if before is None:
-        cam.disable()
-        return [check('camera', '相机标靶', 'unobserved', '没有取得可用于比较的空景原图。')]
+    joints, motors, sensors = gripper_devices(bench, config)
+    lift = config['lift']
+    stages = [('low','低位','lower'), ('high','高位','raise')] if lift else [('fixed','固定高度',None)]
     results = []
-    # Keeping three samples separate makes centerline occlusion distinguishable
-    # from looking entirely away from the fixture.
-    for key, label, y_mm in [('center','中央',0), ('left','左侧',110), ('right','右侧',-110)]:
-        target.setSFVec3f([distance/1000, y_mm/1000, floor_z+.075])
-        name = 'camera-'+key+'.png'
-        after = capture(name)
-        item, heading = 'camera_'+key, '相机 · '+label
-        evidence = dict(resolution=[width,height], target_position_mm=[distance,y_mm,75],
-                        reference_size_mm=[100,100], visible_px=None, bbox_px=None,
-                        frame=name if after is not None else None, empty_frame='camera-empty.png')
-        if after is None:
-            results.append(check(item,heading,'unobserved','没有取到这个位置的相机原图。',**evidence))
-            continue
-        red, green, blue = (after[:,:,i] for i in range(3))
-        magenta = (red>=80) & (blue>=65) & (red-green>=30) & (blue-green>=25)
-        difference = np.abs(after-before).max(axis=2)>=35
-        ys, xs = np.nonzero(magenta & difference)
-        enough = max(12, math.ceil(width*height*.0002))
-        evidence['visible_px'] = int(len(xs))
-        if len(xs):
-            evidence['bbox_px'] = [int(xs.min()),int(ys.min()),int(xs.max()),int(ys.max())]
-        if len(xs)>=enough and np.ptp(xs)+1>=3 and np.ptp(ys)+1>=3:
-            detail = f'在原图看到标靶（{len(xs)} 像素）；可打开图片检查边缘和遮挡。'
-            results.append(check(item,heading,'pass',detail,**evidence))
-        else:
-            detail = '这一参考位置未看清标靶；核对相机方向、高度、视野和遮挡。'
-            results.append(check(item,heading,'review',detail,**evidence))
+    cam.enable(bench.step)
+    for stage, stage_name, lift_goal in stages:
+        caption('正在采集相机标靶：'+stage_name+'…')
+        goals = {entry['joint']:entry['open'] for entry in config['jaws']}
+        if lift:
+            goals[lift['joint']] = lift[lift_goal]
+        positions = move_gripper(bench, joints, motors, sensors, goals) if goals else []
+        at_goal = all(row['status']=='pass' for row in positions)
+        empty_name = f'camera-{stage}-empty.png'
+        target.setSFVec3f([0,0,-3])
+        before = capture(empty_name) if at_goal else None
+        for i, distance in enumerate(distances, 1):
+            for key, label, y_mm in [('center','中央',0), ('left','左侧',110), ('right','右侧',-110)]:
+                item, heading = f'camera_{stage}_{i}_{key}', f'{stage_name} {distance:g} mm {label}'
+                evidence = dict(lift_stage=stage, joint_feedback=positions, target_slot=key,
+                                resolution=[width,height], target_position_mm=[distance,y_mm,75],
+                                reference_size_mm=[100,100], visible_px=None, bbox_px=None,
+                                touches_frame_edge=None, frame=None, empty_frame=empty_name if before is not None else None)
+                if before is None:
+                    detail = ('未确认夹爪达到该姿态，无法比较此组画面。' if not at_goal
+                              else '没有取得可用于比较的空景原图。')
+                    results.append(check(item,heading,'unobserved',detail,**evidence))
+                    continue
+                target.setSFVec3f([distance/1000, y_mm/1000, floor_z+.075])
+                name = f'camera-{stage}-{i:02}-{key}.png'
+                after = capture(name)
+                if after is None:
+                    results.append(check(item,heading,'unobserved','没有取到这个位置的相机原图。',**evidence))
+                    continue
+                evidence['frame'] = name
+                red, green, blue = (after[:,:,k] for k in range(3))
+                magenta = (red>=80) & (blue>=65) & (red-green>=30) & (blue-green>=25)
+                difference = np.abs(after-before).max(axis=2)>=35
+                ys, xs = np.nonzero(magenta & difference)
+                evidence['visible_px'] = int(len(xs))
+                enough = max(12, math.ceil(width*height*.0002))
+                if len(xs):
+                    extent = [int(xs.min()),int(ys.min()),int(xs.max()),int(ys.max())]
+                    evidence['bbox_px'] = extent
+                    evidence['touches_frame_edge'] = (extent[0]==0 or extent[1]==0 or
+                                                      extent[2]==width-1 or extent[3]==height-1)
+                if len(xs)>=enough and np.ptp(xs)+1>=3 and np.ptp(ys)+1>=3:
+                    edge = evidence['touches_frame_edge']
+                    status = 'review' if edge else 'pass'
+                    detail = f'看到标靶（{len(xs)} 像素）'+('，到达画面边缘。' if edge else '；请结合原图检查局部遮挡。')
+                else:
+                    status, detail = 'review', '未看清标靶；检查视野边界、相机方向和车体遮挡。'
+                results.append(check(item,heading,status,detail,**evidence))
     target.setSFVec3f([0,0,-3])
     cam.disable()
     return results
@@ -220,12 +279,7 @@ def gripper_test(bench, config, floor, imported):
                 check('lift','夹爪升降','unobserved','当前车模未配置升降关节。'),
                 check('interference','车内接触','unobserved','没有可运行的夹爪开合动作。')]
     bench.reset()
-    joints = config['jaws'] + ([config['lift']] if config['lift'] else [])
-    motors = {entry['joint']:bench.sim.getDevice(entry['joint']) for entry in joints}
-    sensors = {key: motor.getPositionSensor() if motor else None for key,motor in motors.items()}
-    for sensor in sensors.values():
-        if sensor:
-            sensor.enable(bench.step)
+    joints, motors, sensors = gripper_devices(bench, config)
     moved_ids = set()
     for motor in motors.values():
         node = endpoint(bench.sim,motor,imported) if motor else None
@@ -235,7 +289,6 @@ def gripper_test(bench, config, floor, imported):
         node = bench.car.getFromProtoDef(key) if imported else bench.sim.getFromDef(key)
         if node:
             moved_ids.add(node.getId())
-    bench.advance(.15)
     stages = [('lower_open','低位开爪','open','lower'),
               ('lower_closed','低位合爪','closed','lower')]
     if config['lift']:
@@ -253,21 +306,6 @@ def gripper_test(bench, config, floor, imported):
         goals = {entry['joint']:entry[jaw_pos] for entry in config['jaws']}
         if config['lift']:
             goals[config['lift']['joint']] = config['lift'][lift_pos]
-        duration = .65
-        checks = []
-        for name, target in goals.items():
-            motor, sensor = motors[name], sensors[name]
-            if not motor:
-                continue
-            speed = motor.getMaxVelocity()
-            if not math.isfinite(speed) or speed<=0:
-                continue
-            motor.setVelocity(speed)
-            motor.setPosition(target)
-            observed = sensor.getValue() if sensor else math.nan
-            delta = abs(target-observed) if math.isfinite(observed) else 0
-            duration = max(duration, delta/speed+.45)
-
         peak = linked = 0
         height = None
 
@@ -280,17 +318,7 @@ def gripper_test(bench, config, floor, imported):
                 sample_height = max(p.point[2]-floor for p in points)*1000
                 height = max(height or 0,sample_height)
 
-        bench.advance(duration, tick, max_seconds=10)
-        for name, target in goals.items():
-            motor, sensor = motors[name], sensors[name]
-            value = sensor.getValue() if sensor else math.nan
-            row = next(entry for entry in joints if entry['joint']==name)
-            span = abs(row['open']-row['closed']) if 'open' in row else abs(row['raise']-row['lower'])
-            tolerance = max(.0005, span*.06)
-            state = ('unobserved' if not math.isfinite(value) or not motor else
-                     'pass' if abs(value-target)<=tolerance else 'unobserved' if duration>10 else 'review')
-            checks.append(dict(joint=name, target=finite(target), measured=finite(value), status=state,
-                               tolerance=finite(tolerance), unit='m' if motor and motor.getType()==motor.LINEAR else 'rad'))
+        checks = move_gripper(bench, joints, motors, sensors, goals, tick)
         rows.append((key,label,checks))
         contact_stages.append(dict(stage=key,label=label,peak_contact_points=peak,
                                    peak_gripper_link_points=linked, max_height_mm=finite(height,1) if height is not None else None))
@@ -374,16 +402,18 @@ def run(sim):
     signs = [model.get(side+'_sign',1) if imported else 1 for side in sides]
     floor = scene['floor_z']
     bench = Fixture(sim, scene, names)
-    caption('正在检查车轮方向和编码器…')
-    checks = drive_test(bench, names, signs)
-    caption('正在采集黑白地面的红外读数…')
-    checks.extend(ir_test(bench, robot['ir']['positions_mm']))
-    caption('正在保存摄像头参考画面…')
-    checks.extend(camera_test(bench,settings['target_distance_mm'],floor))
-    caption('正在检查开合、升降和车内接触…')
-    checks.extend(gripper_test(bench,scene['gripper'],floor,imported))
-    publish('report.json',dict(format='moonlight-assembly-check', version=1, model_kind=kind,
-                               physics_step_ms=bench.step, checks=checks))
+    checks = []
+    if not settings['camera_only']:
+        caption('正在检查车轮方向和编码器…')
+        checks.extend(drive_test(bench, names, signs))
+        caption('正在采集黑白地面的红外读数…')
+        checks.extend(ir_test(bench, robot['ir']['positions_mm']))
+    checks.extend(camera_test(bench, settings['target_distances_mm'], floor, scene['gripper']))
+    if not settings['camera_only']:
+        caption('正在检查开合、升降和车内接触…')
+        checks.extend(gripper_test(bench,scene['gripper'],floor,imported))
+    publish('report.json',dict(format='moonlight-assembly-check', version=2, model_kind=kind,
+                               physics_step_ms=bench.step, camera_mount=robot.get('camera'), checks=checks))
 
 
 if __name__=='__main__':
