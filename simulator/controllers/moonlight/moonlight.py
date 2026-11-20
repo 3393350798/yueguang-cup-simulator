@@ -15,7 +15,8 @@ ROOT=Path(__file__).resolve().parents[2]
 ALGORITHM_PATH=ROOT/'controllers/moonlight/member_algorithm.py'
 diagnostics=RuntimeLog(ROOT.parent)
 diagnostics.install_exception_hook()
-diagnostics.event('startup_begin',project_version=project_version(ROOT.parent))
+PROJECT_VERSION=project_version(ROOT.parent)
+diagnostics.event('startup_begin',project_version=PROJECT_VERSION)
 # Webots R2025a 的 Windows 启动器可能以错误编码传递中文安装目录。
 # 用已找到的 controller 包位置恢复真实运行时路径，再加载其 DLL。
 controller_spec=importlib.util.find_spec('controller')
@@ -583,6 +584,7 @@ while sim.step(STEP)!=-1:
             last_view_wall=now
             active_steps=0
         payload=dict(state,sensors=sensors,pose=p,firmware=firmware_status,panel_session=panel_session,panel_tick=tick,
+                     project_version=PROJECT_VERSION,
                      trace=trace,trace_epoch=trace_epoch,rate=panel_rate,claw=grasp,block_position=block_pose,
                      trial=dict(trial.report(state,p),id=round_id),round_result=round_result,
                      resetting=sim.getTime()<ready_at,round_error=round_error,

@@ -18,7 +18,7 @@ FORMAT = {'format': 'moonlight-team', 'version': 1}
 ASSET = re.compile(r'hardware/imported/[a-z0-9_-]{1,64}/[a-z0-9_-]{1,64}\.(urdf|stl|json|elf|axf|hex|bin)')
 RESERVED = re.compile(r'(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?')
 LIMIT = 512 * 1024 * 1024
-APP_FILES = ('.gitignore', 'LICENSE', 'README.md', 'setup.bat', 'start.bat', 'start.sh')
+APP_FILES = ('.gitignore', 'LICENSE', 'README.md', 'VERSION', 'setup.bat', 'start.bat', 'start.sh')
 APP_DIRS = ('docs', 'requirements', 'scripts', 'simulator')
 
 

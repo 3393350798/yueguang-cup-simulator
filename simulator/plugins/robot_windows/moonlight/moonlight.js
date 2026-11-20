@@ -1,6 +1,6 @@
 const build=new URLSearchParams(location.search).get('v')||Date.now();
-const [{default:config},{initTrace},{initTrials},{initIncidents}]=await Promise.all(
-  ['scene','trace','trials','incidents'].map(name=>import('./'+name+'.js?v='+encodeURIComponent(build)))
+const [{default:config},{initTrace},{initTrials},{initIncidents},{initHelpBundle}]=await Promise.all(
+  ['scene','trace','trials','incidents','help-bundle'].map(name=>import('./'+name+'.js?v='+encodeURIComponent(build)))
 );
 const elements=new Map();
 const $=id=>{
@@ -76,7 +76,7 @@ function send(command,extra={}){
   if(socket?.readyState===1)socket.send(`robot:${robotName}:${payload}`);
   else pending.push(payload);
 }
-const trials=initTrials(send,incidents);
+const trials=initTrials(send,incidents,initHelpBundle(config,incidents));
 function connectionStatus(message, warning=false){
   const badge=$('connection');
   if(badge.textContent!==message)badge.textContent=message;

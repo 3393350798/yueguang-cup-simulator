@@ -27,7 +27,7 @@ function firstUnmet(r){
   return '适用检查均通过';
 }
 
-export function initTrials(send,incidents){
+export function initTrials(send,incidents,help){
   const $=id=>document.getElementById('trial-'+id);
   const value=id=>document.getElementById(id).value;
   const field=(id,min,max)=>Math.max(min,Math.min(max,Math.round(Number($(id).value))||min));
@@ -39,6 +39,7 @@ export function initTrials(send,incidents){
   const records=[];
   // Report JSON stays separate from replay JSON and browser-only lookup keys.
   const recordEpochs=new WeakMap();
+  const supportData=new WeakMap();
   const add=r=>{
     const tr=document.createElement('tr');
     const condition=Number.isInteger(r.case_index)?' · 工况 '+r.case_index+'/6':'';
@@ -54,6 +55,12 @@ export function initTrials(send,incidents){
       const button=document.createElement('button');
       button.className='small';button.type='button';button.textContent='查看本轮失败片段';
       button.onclick=()=>incidents.openRound(key);
+      tr.cells[1].append(document.createElement('br'),button);
+    }
+    if(supportData.has(r)){
+      const button=document.createElement('button');
+      button.className='small';button.type='button';button.textContent='导出本轮求助包';
+      button.onclick=()=>help.open(supportData.get(r),key);
       tr.cells[1].append(document.createElement('br'),button);
     }
     return tr;
@@ -127,6 +134,8 @@ export function initTrials(send,incidents){
       row.first_unmet=firstUnmet(row);
     }
     recordEpochs.set(row,epoch);
+    const verdict=current?.round_error?firstUnmet({...row,reason:'error'}):firstUnmet(row);
+    supportData.set(row,help.capture(row,current,verdict));
     records.push(row);
   }
   function finishCase(r,state,epoch){

@@ -141,8 +141,15 @@ export function initIncidents({stepMs,field,open}){
   redraw();
   return {
     get revision(){return revision;},
-    hasRound(key){return clips.some(clip=>clip!==active?.clip&&clipEpochs.get(clip)===key);},
+    hasRound(key){return key!==undefined&&clips.some(clip=>clip!==active?.clip&&clipEpochs.get(clip)===key);},
+    exportRound(key){
+      // Only the current page's completed clip may be associated with a round.
+      if(key===undefined)return null;
+      const clip=clips.find(clip=>clip!==active?.clip&&clipEpochs.get(clip)===key);
+      return clip?safeClip(clip):null;
+    },
     openRound(key){
+      if(key===undefined)return;
       const clip=clips.find(clip=>clip!==active?.clip&&clipEpochs.get(clip)===key);
       if(clip)show(clip);
     },
