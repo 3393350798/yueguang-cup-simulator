@@ -5,6 +5,7 @@ import codecs
 from contextlib import suppress
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -13,6 +14,20 @@ import time
 from firmware.pins import resolve_pin
 
 ROOT = Path(__file__).resolve().parents[1]
+PERIPHERAL_FIELDS = ('vision_uart', 'encoder_cpr', 'ir_threshold', 'motor_signs', 'cpu_mips')
+SIGNAL_ROLE = re.compile(r'(?:left|right)_(?:pwm|in[12])|encoder_(?:left|right)_[ab]|'
+                         r'gripper_(?:close|lift)|ir[0-9]+|sonar_[A-Za-z][A-Za-z0-9_]*_(?:trig|echo)')
+
+
+def peripheral_snapshot(config, bindings):
+    """Describe the settings consumed by the virtual chip, without local metadata."""
+    return dict(model='STM32F103C8T6',
+                bindings={role: gpio for role, gpio in bindings.items() if SIGNAL_ROLE.fullmatch(role)},
+                vision_uart=config['vision_uart'],
+                encoder_cpr=config['encoder_cpr'],
+                ir_threshold=config['ir_threshold'],
+                motor_signs=list(config['motor_signs']),
+                cpu_mips=int(config.get('cpu_mips', 8)))
 
 
 class FirmwareImageMissing(ValueError):
@@ -70,6 +85,7 @@ class FirmwareBridge:
             for side in ('left','right'):
                 if not all(side+suffix in bindings for suffix in ('_pwm','_in1','_in2')):
                     raise MotorPinsMissing('请填写'+side+'_pwm / '+side+'_in1 / '+side+'_in2 三个电机驱动引脚。')
+        self.peripherals = peripheral_snapshot(self.config, bindings)
         self._temporary = tempfile.TemporaryDirectory(prefix='moonlight-fw-bench-') if bench else None
         self.folder = Path(self._temporary.name if self._temporary else tempfile.mkdtemp(prefix='moonlight-fw-'))
         self.process = self.socket = self.stream = None
@@ -90,7 +106,7 @@ class FirmwareBridge:
             shutil.copyfile(path, self.folder/path.name)
         platform = (self.folder/'f103.repl').read_text(encoding='utf-8')
         platform = platform.replace('"rcc.py"', '"'+(self.folder/'rcc.py').as_posix()+'"')
-        platform = platform.replace('PerformanceInMips: 8', 'PerformanceInMips: '+str(int(self.config.get('cpu_mips', 8))))
+        platform = platform.replace('PerformanceInMips: 8', 'PerformanceInMips: '+str(self.peripherals['cpu_mips']))
         (self.folder/'f103.repl').write_text(platform, encoding='utf-8')
         suffix = image.suffix.lower()
         shutil.copyfile(image, self.folder/('member'+suffix))

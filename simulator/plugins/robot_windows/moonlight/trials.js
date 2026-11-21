@@ -1,6 +1,7 @@
 const query=new URL(import.meta.url).search;
-const [{settingsFromPanel,samePlan,compareLatest,faultNotes},{observedAtStart,readToleranceReport,compareTolerance,showToleranceComparison}]=
-  await Promise.all(['fault-regression','tolerance-compare'].map(name=>import('./'+name+'.js'+query)));
+const [{settingsFromPanel,samePlan,compareLatest,faultNotes},{observedAtStart,readToleranceReport,compareTolerance,showToleranceComparison},
+  {replayEvidence,matchesPreset,compareRerun,rejectionMessage}]=
+  await Promise.all(['fault-regression','tolerance-compare','round-rerun'].map(name=>import('./'+name+'.js'+query)));
 const names={full:'全程',pickup:'识别与抓放',channel:'超声波通道',parking:'终点停车'};
 const colors={red:'红块',yellow:'黄块',blue:'蓝块'};
 const required=['stage','mode','group','color','elapsed','wall_hits','sonar_triggers','falls'];
@@ -71,7 +72,7 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1,history){
   const supportData=new WeakMap();
   const add=r=>{
     const tr=document.createElement('tr');
-    const condition=r.suite==='tolerance'?' · 容差：'+(r.tolerance_run?.case?.label||'未记录')
+    const condition=r.suite==='rerun'?' · 历史单轮复跑':r.suite==='tolerance'?' · 容差：'+(r.tolerance_run?.case?.label||'未记录')
       :Number.isInteger(r.case_index)?' · 工况 '+r.case_index+'/6':'';
     const items=[(r.label||'历史')+' · '+names[r.stage]+' · '+scenario(r)+condition,
       firstUnmet(r),
@@ -114,7 +115,7 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1,history){
       +' · 停稳摆正 '+rates(r=>uses(r,'parking'),r=>r.aligned);
   }
   function updateProgress(){
-    const labels={matrix:'固定工况',repeat:'重复同一工况',tolerance:'容差练习'};
+    const labels={matrix:'固定工况',repeat:'重复同一工况',tolerance:'容差练习',rerun:'历史单轮复跑'};
     const active=batch?labels[batch.kind]+' · 已记录 '+batch.index+' / '+batch.cases.length+
       ' · 正在测试 '+(batch.kind==='tolerance'?lastTolerance.cases[batch.index].label:scenario(batch.cases[batch.index]))+'。 ':'';
     $('batch').textContent=batch?.kind==='repeat'?'停止多轮':'开始多轮';
@@ -124,9 +125,10 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1,history){
     $('matrix').disabled=Boolean(batch&&batch.kind!=='matrix');
     $('tolerance').disabled=Boolean(batch&&batch.kind!=='tolerance');
     $('finish').disabled=Boolean(batch||!current?.trial||current.round_result||current.resetting);
-    const ordinary=records.filter(r=>r.suite!=='tolerance'), old=baseline.filter(r=>r.suite!=='tolerance');
+    const ordinaryRow=r=>!['tolerance','rerun'].includes(r.suite);
+    const ordinary=records.filter(ordinaryRow), old=baseline.filter(ordinaryRow);
     $('summary').textContent=active+(notice?notice+' ':'')
-      +(ordinary.length?'当前 '+totals(ordinary):records.length?'容差记录见下表':'尚无记录')
+      +(ordinary.length?'当前 '+totals(ordinary):records.length?'练习记录见下表':'尚无记录')
       +(old.length?'；历史 '+totals(old):'');
     const r=lastTolerance?toleranceSummary(lastTolerance,records):null;
     if(r){
@@ -176,11 +178,15 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1,history){
     if(ending?.kind==='tolerance'){
       lastTolerance.status='cancelled';
       if(pause)send('end_tolerance',{round_id:ending.expected});
+    }else if(ending?.kind==='rerun'){
+      clearTimeout(ending.timer);
+      history.replayStatus(message);
+      if(pause)endReplay(ending);
     }else if(pause)send('pause');
     updateProgress();
   }
   function position(){
-    if(batch)abort('多轮已停止。');
+    if(batch)abort(batch.kind==='rerun'?'已停止本次复跑。':'多轮已停止。');
     send('reset',settings());
   }
   function resetCase(state){
@@ -188,6 +194,38 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1,history){
     batch.started=false;
     batch.ran=false;
     send('reset',batch.cases[batch.index]);
+  }
+  function endReplay(plan){
+    send('end_replay',{round_id:plan.expected,rerun_ticket:plan.ticket});
+  }
+  function startReplay(source){
+    const scenario=source.snapshot.scenario, prior=source.replay;
+    const fail=message=>history.replayStatus(message,batch?.kind==='rerun');
+    if(!prior)return fail('这轮未保存完整的开跑条件，无法自动复跑。');
+    if(!current?.trial||source.project!==current.history_project_id)return fail('请先连接记录所属工程。');
+    if(batch||current.running||current.resetting)return fail('当前仍有练习或摆位进行中，请等待结束。');
+    if(value('mode')!==scenario.mode||current.mode!==scenario.mode)
+      return fail('请先切回历史轮次的「'+(scenario.mode==='member'?'会员算法':'STM32 固件')+'」模式。');
+    if(current.project_version!==source.snapshot.project_version||current.trial.field_revision!==scenario.field||
+      current.trial.step_ms!==scenario.step_ms)return fail('仿真版本、场地或步长不同，无法复跑。');
+    if(prior.tolerance&&(!lightGain||!presets.some(p=>matchesPreset(p,prior.tolerance))))
+      return fail('当前场景没有同一组容差参数，无法复跑。');
+    if(prior.fault_plan?.sonar&&!Object.keys(current.sensors?.sonar||{}).length)
+      return fail('当前小车没有超声波，无法复跑原故障。');
+    const plan={stage:scenario.stage,group:source.group,color:scenario.color,limit:prior.limit_s,
+      ...(prior.fault_plan!==null?{fault_plan:prior.fault_plan}:{}),
+      ...(prior.tolerance?{tolerance_id:prior.tolerance.id}:{})};
+    const ticket=Array.from(crypto.getRandomValues(new Uint8Array(16)),n=>n.toString(16).padStart(2,'0')).join('');
+    const run={kind:'rerun',index:0,cases:[plan],source,ticket,label:$('label').value,mode:scenario.mode,
+      session:current.panel_session,expected:current.trial.id+1,started:false,ran:false};
+    batch=run;
+    // A declined stale request may leave the preceding round id unchanged.
+    run.timer=setTimeout(()=>{if(batch===run&&!run.started)abort('场景未确认复跑请求，请等待当前摆位完成后重试。',true);},10000);
+    send('reset',{...plan,session:current.panel_session,round_id:current.trial.id,
+      rerun_expected:{ticket,mode:scenario.mode,scene_signature:prior.scene_signature,observed:prior.observed}});
+    notice='';
+    history.replayStatus('正在恢复这一轮的设置并等待车体停稳。',true);
+    updateProgress();
   }
   function startBatch(kind){
     if(batch){abort(batch.kind==='tolerance'?'容差练习已停止；已完成的记录可以导出。':'多轮已停止；已完成的记录可以导出。',true);return;}
@@ -219,7 +257,7 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1,history){
   }
   function record(r,epoch,plan){
     completedEpoch=epoch;
-    const {trace_end_t,...result}=r;
+    const {trace_end_t,round_replay,...result}=r;
     const row={...result,label:plan?.label??$('label').value};
     if(plan?.kind==='matrix'){
       row.suite='parity-colors';
@@ -234,26 +272,37 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1,history){
       row.limit_s=plan.cases[plan.index].limit;
       row.first_unmet=firstUnmet(row);
       row.first_unmet_stage=outcome(row).stage;
+    }else if(plan?.kind==='rerun'){
+      row.suite='rerun';
+      row.limit_s=plan.cases[0].limit;
     }
     if(row.reason==='time'&&!current?.round_error&&outcome(row).stage)
       incidents.finishTimeout(epoch,trace_end_t,row.elapsed,row);
     recordEpochs.set(row,epoch);
     const verdict=current?.round_error?firstUnmet({...row,reason:'error'}):firstUnmet(row);
     const snapshot=help.capture(row,current,verdict);
+    const replay=replayEvidence(row,round_replay,snapshot);
+    const comparison=plan?.kind==='rerun'?compareRerun(plan.source,snapshot,replay):null;
     supportData.set(row,snapshot);
     history.record(epoch,{batch:plan?.historyId??epoch,kind:plan?.kind??'single',index:(plan?.index??0)+1,
-      total:plan?.cases.length??1,label:String(row.label).slice(0,50),group:row.group},snapshot,
+      total:plan?.cases.length??1,label:String(row.label).slice(0,50),group:row.group,replay,comparison},snapshot,
       incidents.snapshotRound(epoch));
     records.push(row);
+    return comparison;
   }
   function finishCase(r,state,epoch){
-    record(r,epoch,batch);
+    const comparison=record(r,epoch,batch);
     if(++batch.index<batch.cases.length)resetCase(state);
     else{
       if(batch.kind==='tolerance'){
         notice='容差练习已结束，恢复常规摆位。';
         lastTolerance.status='complete';
         send('end_tolerance',{round_id:batch.expected});
+      }else if(batch.kind==='rerun'){
+        clearTimeout(batch.timer);
+        history.replayStatus(comparison);
+        endReplay(batch);
+        notice='历史单轮复跑已结束。';
       }else notice=batch.kind==='matrix'?'固定工况已完成（6 轮）。':'多轮已完成。';
       batch=null;
     }
@@ -295,8 +344,10 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1,history){
     }catch(error){notice='无法打开对照报告：'+error.message;updateProgress();}
   };
   return {
+    startReplay,
     pause(){
-      if(batch)abort(batch.kind==='tolerance'?'容差练习已停止；已完成的记录可以导出。':'多轮已暂停；已完成的记录可以导出。',true);
+      if(batch)abort(batch.kind==='rerun'?'已停止本次复跑。':
+        batch.kind==='tolerance'?'容差练习已停止；已完成的记录可以导出。':'多轮已暂停；已完成的记录可以导出。',true);
       else send('pause');
     },
     receive(state,epoch){
@@ -316,25 +367,33 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1,history){
           if(state.running)orphanedEpoch=epoch;
         }
         const r=state.round_result;
-        if(r&&!r.tolerance_run&&epoch!==completedEpoch&&!(r.reason==='time'&&epoch===orphanedEpoch)){
+        if(r&&!r.tolerance_run&&!r.round_replay?.ticket&&epoch!==completedEpoch&&!(r.reason==='time'&&epoch===orphanedEpoch)){
           record(r,epoch);redraw();
         }
         return;
       }
-      if(state.mode!==batch.mode||state.panel_session!==batch.session){abort('运行环境已切换，多轮已停止。');return;}
+      const rerun=batch.kind==='rerun';
+      if(state.mode!==batch.mode||state.panel_session!==batch.session){abort(rerun?'运行环境已切换，复跑已停止。':'运行环境已切换，多轮已停止。');return;}
       if(state.trial.id<batch.expected)return;
       const plan=batch.cases[batch.index];
       if(state.trial.id!==batch.expected||['stage','group','color'].some(k=>state.trial[k]!==plan[k])){
-        abort('摆位条件已改变，多轮已停止。');return;
+        abort(rerun?'摆位条件已改变，复跑已停止。':'摆位条件已改变，多轮已停止。');return;
       }
-      if(batch.kind==='matrix'&&!samePlan(state.trial.fault_run?.plan,plan.fault_plan,plan.limit,batch.mode)){
-        abort('场景未确认本轮定时故障设置，固定工况已停止。',true);return;
+      if(rerun&&state.trial.round_replay?.ticket!==batch.ticket){
+        abort('场景已接受另一轮请求，本次复跑已停止。');return;
       }
-      if(batch.kind==='tolerance'&&!toleranceMatches(state.trial.tolerance_run,lastTolerance.cases[batch.index],plan.limit)){
-        abort('场景未确认本轮容差工况，已停止。',true);return;
+      if(rerun&&state.trial.round_replay.rejection){
+        abort('没有开始复跑：'+rejectionMessage(state.trial.round_replay.rejection),true);return;
+      }
+      if(plan.fault_plan!==undefined&&!samePlan(state.trial.fault_run?.plan,plan.fault_plan,plan.limit,batch.mode)){
+        abort(rerun?'场景未确认历史定时故障，复跑已停止。':'场景未确认本轮定时故障设置，固定工况已停止。',true);return;
+      }
+      const preset=batch.kind==='tolerance'?lastTolerance.cases[batch.index]:rerun?batch.source.replay.tolerance:null;
+      if(preset&&!toleranceMatches(state.trial.tolerance_run,preset,plan.limit)){
+        abort(rerun?'场景未确认历史容差工况，复跑已停止。':'场景未确认本轮容差工况，已停止。',true);return;
       }
       if(state.round_error){
-        if(batch.kind==='matrix'||batch.kind==='tolerance'){
+        if(batch.kind==='matrix'||batch.kind==='tolerance'||rerun){
           if(epoch!==completedEpoch)finishCase({...state.trial,reason:'error'},state,epoch);
         }else abort('多轮已停止：'+state.round_error);
         return;
@@ -342,15 +401,23 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1,history){
       if(state.round_result&&epoch!==completedEpoch){
         finishCase(state.round_result,state,epoch);return;
       }
-      if(state.running)batch.ran=true;
-      if(batch.ran&&!state.running){
-        abort('多轮已暂停；已完成的记录可以导出。');return;
+      if(state.running&&!batch.ran){
+        batch.ran=true;
+        if(rerun)history.replayStatus('正在复跑这一轮。'+(batch.source.replay.external_uart?
+          '历史轮次含外部串口输入，结束后仅展示两次结果。':''),true);
       }
-      if(!batch.started&&!state.resetting){batch.started=true;send('start');}
+      if(batch.ran&&!state.running){
+        abort(rerun?'复跑已中断。':'多轮已暂停；已完成的记录可以导出。',rerun);return;
+      }
+      if(!batch.started&&!state.resetting){
+        batch.started=true;
+        if(rerun){clearTimeout(batch.timer);send('start',{round_id:batch.expected,rerun_ticket:batch.ticket});}
+        else send('start');
+      }
     },
     disconnect(){
       current=null;
-      if(batch)abort('场景已断开，多轮已停止。');
+      if(batch)abort(batch.kind==='rerun'?'面板已断开，正在执行的复跑可能持续到时限。重新连接后可点「暂停 / 停车」。':'场景已断开，多轮已停止。');
       redraw();
     }
   };

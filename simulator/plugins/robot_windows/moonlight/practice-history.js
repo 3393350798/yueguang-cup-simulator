@@ -1,5 +1,6 @@
+const {cleanRerunPlan,unavailableReplay}=await import('./round-rerun.js'+new URL(import.meta.url).search);
 const maxRounds=60, maxClipBytes=24*1024*1024;
-const kinds={single:'单轮记录',repeat:'同条件多轮',matrix:'固定工况',tolerance:'容差练习'};
+const kinds={single:'单轮记录',repeat:'同条件多轮',matrix:'固定工况',tolerance:'容差练习',rerun:'历史单轮复跑'};
 const stages={full:'全程',pickup:'识别与抓放',channel:'超声波通道',parking:'终点停车'};
 const colors={red:'红块',yellow:'黄块',blue:'蓝块'};
 const projectPattern=/^[0-9a-f]{32}$/;
@@ -116,9 +117,9 @@ function clear(db,project){
   });
 }
 
-export function initPracticeHistory({openClip,openHelp,clearIncidents,validateClip,validateSnapshot}){
+export function initPracticeHistory({openClip,openHelp,clearIncidents,validateClip,validateSnapshot,startReplay,cancelReplay}){
   const node=id=>document.getElementById('history-'+id);
-  const list=node('items'), status=node('status'), clearButton=node('clear');
+  const list=node('items'), status=node('status'), clearButton=node('clear'), stop=node('stop-replay'), replayStatus=node('replay-status');
   let project, db, state='waiting', rows=[], queue=Promise.resolve(), memoryClips=new Map(), channel, selection=0, clearFailure='';
   try{channel=new BroadcastChannel('moonlight-practice-history');}catch{}
   const report=text=>{status.textContent=text;};
@@ -129,9 +130,11 @@ export function initPracticeHistory({openClip,openHelp,clearIncidents,validateCl
        row.index>row.total||row.total>20||!Number.isSafeInteger(row.created)||row.created<0||row.created>8.64e15||
        !Number.isSafeInteger(row.clipBytes)||row.clipBytes<0||row.clipBytes>maxClipBytes)return [];
     const snapshot=validateSnapshot(row.snapshot);
+    const replay=cleanRerunPlan(row.replay,snapshot,row.group);
     return snapshot?[{project:row.project,key:row.key,batch:row.batch,kind:row.kind,index:row.index,total:row.total,
       group:Number.isSafeInteger(row.group)?row.group:null,label:typeof row.label==='string'?row.label.slice(0,50):'',
-      created:row.created,clipBytes:row.clipBytes,clipPartial:row.clipPartial===true,snapshot}]:[];
+      created:row.created,clipBytes:row.clipBytes,clipPartial:row.clipPartial===true,snapshot,replay,
+      comparison:row.kind==='rerun'&&typeof row.comparison==='string'?row.comparison.slice(0,300):null}]:[];
   });
   const say=()=>{
     if(state==='waiting')return '等待场景确认本工程。';
@@ -177,7 +180,13 @@ export function initPracticeHistory({openClip,openHelp,clearIncidents,validateCl
         item.value=row.index;
         if(row.clipBytes)buttons.append(button('查看本轮失败片段',()=>show(row,false)));
         buttons.append(button('导出本轮求助包',()=>show(row,true)));
+        if(row.replay)buttons.append(button('按原条件复跑',()=>{if(project===row.project)startReplay(row);}));
         item.append(label,buttons);rounds.append(item);
+        if(row.comparison||!row.replay){
+          const note=document.createElement('small');
+          note.textContent=row.comparison||unavailableReplay(result);
+          item.append(note);
+        }
       }
       detail.append(summary,rounds);
       return detail;
@@ -212,6 +221,7 @@ export function initPracticeHistory({openClip,openHelp,clearIncidents,validateCl
       return;
     }
     if(identity===project)return;
+    replayStatus.textContent='';stop.hidden=true;
     project=identity;state='loading';selection++;rows=[];memoryClips=new Map();clearFailure='';redraw();
     schedule(identity,async()=>{
       if(!db)db=await openStorage();
@@ -252,14 +262,17 @@ export function initPracticeHistory({openClip,openHelp,clearIncidents,validateCl
       }catch{}
       if(project!==identity)return;
       rows=[];memoryClips.clear();
+      if(stop.hidden)replayStatus.textContent='';
       const recentCleared=clearIncidents();
       state=persisted?'saved':'memory';
       if(persisted)channel?.postMessage(identity);
       clearFailure=persisted&&recentCleared?'':'已清本页记录，未能确认浏览器里的历史与片段全部清除。';
     });
   };
+  stop.onclick=cancelReplay;
   return {
     bind,
+    replayStatus(message,active=false){replayStatus.textContent=message;stop.hidden=!active;},
     record(key,meta,snapshot,clip){
       write(key,{...meta,project,key,created:Date.now(),snapshot},clip);
     },

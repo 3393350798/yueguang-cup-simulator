@@ -6,6 +6,7 @@ from random import Random
 class Imperfections:
     def __init__(self, config):
         seed = config.get('seed', 0)
+        self.sensor_seed = seed
         self.sensor_random = Random(seed)
         self.uart_random = Random(seed + 1)
         self.gain = config.get('motor_gain', [1, 1])
@@ -21,6 +22,11 @@ class Imperfections:
                 not all(v >= 0 for v in (self.ir_noise, self.sonar_noise_m, self.uart_delay)) or
                 not 0 <= self.uart_loss <= 1):
             raise ValueError('请核对 imperfections 中的增益、死区、噪声、延迟和丢包率。')
+
+    def restart_sensor_noise(self):
+        # Idle preview reads must not shift the first running noise sample.
+        # UART has an independent stream and may have timed input queued.
+        self.sensor_random.seed(self.sensor_seed)
 
     def motor(self, index, ratio):
         deadzone = self.deadzone[index]

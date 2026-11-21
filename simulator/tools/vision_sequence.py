@@ -8,6 +8,7 @@ import sys
 import time
 
 from vision_replay import SAMPLES, export_openmv, load_dataset
+from vision_clip import add_commands
 
 
 STEP_MS = 250
@@ -191,8 +192,12 @@ def main():
     bundle = commands.add_parser('export', help='导出图像与正常、故障 CSV 计划')
     bundle.add_argument('destination', type=Path, help='新建输出目录，不覆盖已有文件夹')
     bundle.add_argument('--format', choices=('png', 'openmv'), default='png')
+    add_commands(commands)
     args = parser.parse_args()
     try:
+        if hasattr(args, 'clip_action'):
+            args.clip_action(args)
+            return 0
         if args.command == 'timeline':
             sys.stdout.buffer.write(timeline_csv(args.mode))
             return 0
@@ -210,6 +215,9 @@ def main():
     except (OSError, ValueError) as error:
         print(f'视觉连续帧回放失败：{error}', file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        print('已取消视觉录制或对照。', file=sys.stderr)
+        return 130
     return 0
 
 

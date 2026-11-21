@@ -138,15 +138,41 @@ function uartLines(rows){
   return lines.reverse().join('\n');
 }
 
+function recordedPeripherals(setup){
+  const invalid=()=>new Error('录制缺少有效的固件外设配置，请在 STM32 模式重新录制');
+  if(!setup||setup.model!=='STM32F103C8T6'||!['usart1','usart2','usart3'].includes(setup.vision_uart)||
+     !Number.isInteger(setup.encoder_cpr)||setup.encoder_cpr<1||setup.encoder_cpr>1000000000||
+     !Number.isInteger(setup.cpu_mips)||setup.cpu_mips<1||setup.cpu_mips>0xffffffff||
+     !Number.isFinite(setup.ir_threshold)||setup.ir_threshold<0||setup.ir_threshold>1||
+     !Array.isArray(setup.motor_signs)||setup.motor_signs.length!==2||!setup.motor_signs.every(n=>n===1||n===-1)||
+     !setup.bindings||typeof setup.bindings!=='object'||Array.isArray(setup.bindings))throw invalid();
+  const bindings=Object.entries(setup.bindings);
+  const roleName=/^(?:(?:left|right)_(?:pwm|in[12])|encoder_(?:left|right)_[ab]|gripper_(?:close|lift)|ir[0-9]+|sonar_[A-Za-z][A-Za-z0-9_]*_(?:trig|echo))$/;
+  const gpioPin=/^P(?:[AB](?:[0-9]|1[0-5])|C1[3-5]|D[01])$/;
+  if(bindings.length>37||bindings.some(([role,gpio])=>!roleName.test(role)||
+     typeof gpio!=='string'||!gpioPin.test(gpio)))throw invalid();
+  if(new Set(bindings.map(([,gpio])=>gpio)).size!==bindings.length)
+    throw new Error('录制时同一 GPIO 对应多项外设，请修正接线设置再录制');
+  return {model:setup.model,bindings:Object.fromEntries(bindings),vision_uart:setup.vision_uart,
+    encoder_cpr:setup.encoder_cpr,ir_threshold:setup.ir_threshold,motor_signs:setup.motor_signs.slice(),cpu_mips:setup.cpu_mips};
+}
+
 function firmwareClip(data, end){
   const step=data.step_ms, rows=data.samples;
   if(![4,8,16,32].includes(step))throw new Error('录制周期须为 4、8、16 或 32 ms');
   const isInput=row=>row?.mode==='firmware'&&[1,2].includes(row.firmware_input);
   while(end>=0&&!isInput(rows[end]))end--;
   if(end<0)throw new Error('当前时间之前没有 STM32 实际输入，请先录制 STM32 模式');
+  const run=rows[end].firmware_run;
+  let peripherals;
+  if(run!==undefined){
+    if(!Number.isSafeInteger(run)||run<1)throw new Error('录制中的固件运行编号无效');
+    peripherals=recordedPeripherals(data.firmware_setups?.[run]);
+  }
   const time=row=>Math.round(row.t*1000000);
   let start=end;
   while(start>0&&(end-start+2)*step<=5000&&isInput(rows[start-1])&&
+        rows[start-1].firmware_run===run&&
         time(rows[start])-time(rows[start-1])===step*1000)start--;
   const samples=rows.slice(start,end+1).map((row,i)=>{
     if(!Array.isArray(row.uart_in)||row.uart_in.length>256)
@@ -157,8 +183,8 @@ function firmwareClip(data, end){
       uart_in:row.uart_in
     };
   });
-  return {format:'moonlight-firmware-trace',version:1,step_ms:step,
-    source_start_ms:time(rows[start])/1000,samples};
+  return {format:'moonlight-firmware-trace',version:peripherals?2:1,step_ms:step,
+    source_start_ms:time(rows[start])/1000,...(peripherals?{peripherals}:{}),samples};
 }
 
 export function initTrace(stepMs,showIncidentFrame){
@@ -271,7 +297,8 @@ export function initTrace(stepMs,showIncidentFrame){
     try{
       const clip=firmwareClip(data,replay?index:data.samples.length-1);
       download(clip,'moonlight-firmware-input-');
-      status='已导出固件输入 · '+clip.samples.length+' 个周期 · 含原始串口字节，请留在本机';
+      status='已导出固件输入 · '+clip.samples.length+' 个周期 · '+
+        (clip.peripherals?'已附录制时外设配置':'旧录制无外设配置')+' · 含原始串口字节，请留在本机';
     }catch(error){status='无法导出固件输入：'+error.message;}
     draw(true);
   };
@@ -324,14 +351,21 @@ export function initTrace(stepMs,showIncidentFrame){
     if(plotsVisible)draw(true);
   }).observe(plotArea);
   createPlots();draw();
-  function receive(nextEpoch,batch){
+  function receive(nextEpoch,batch,setups){
     if(!batch?.length)return;
     if(epoch!==undefined&&nextEpoch!==epoch){live=[];stopRecording('场景重置 · 录制已结束');}
     epoch=nextEpoch;
     live.push(...batch);
     live=live.slice(bound(live,live.at(-1).t-windowSeconds));
     if(recording){
-      capture.samples.push(...batch.slice(0,maxSamples-capture.samples.length));
+      const selection=batch.slice(0,maxSamples-capture.samples.length);
+      capture.samples.push(...selection);
+      for(const {firmware_run:run} of selection){
+        if(Number.isSafeInteger(run)&&run>0&&setups?.[run]){
+          const saved=capture.firmware_setups??={};
+          saved[run]??=setups[run];
+        }
+      }
       if(capture.samples.length===maxSamples)stopRecording('达到录制上限 · 录制已结束');
     }
     if(!replay)draw();

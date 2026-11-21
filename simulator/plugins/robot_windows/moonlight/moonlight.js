@@ -78,7 +78,8 @@ function send(command,extra={}){
 }
 const helpBundle=initHelpBundle(config);
 const history=initPracticeHistory({openClip:incidents.openStored,openHelp:helpBundle.open,
-  clearIncidents:incidents.clear,validateClip:safeClip,validateSnapshot:restoreRoundSnapshot});
+  clearIncidents:incidents.clear,validateClip:safeClip,validateSnapshot:restoreRoundSnapshot,
+  startReplay:row=>trials.startReplay(row),cancelReplay:()=>trials.pause()});
 incidents.onSettled(history.attach);
 const trials=initTrials(send,incidents,helpBundle,
   config.tolerance_cases??[],config.robot?.imperfections?.light_gain??1,history);
@@ -138,7 +139,7 @@ function receive(data){
   const epoch=data.panel_session?data.panel_session+':'+data.trace_epoch:data.trace_epoch;
   incidents.bindProject(data.history_project_id);
   history.bind(data.history_project_id);
-  trace.receive(epoch,data.trace);
+  trace.receive(epoch,data.trace,data.firmware_setups);
   incidents.receive(epoch,data.trace,{stage:data.trial?.stage??'full',color:data.color,timedEnd:data.round_result?.trace_end_t});
   trials.receive(data,epoch);
   if(data.image)previewFrame=data.image;

@@ -16,6 +16,8 @@ import time
 from uuid import uuid4
 
 from firmware_bench import FirmwareBridge, ROOT, load_setup
+from firmware.pins import PACKAGE
+from firmware_bridge import PERIPHERAL_FIELDS, SIGNAL_ROLE, peripheral_snapshot
 from preflight import validate_image
 from vision_replay import ID, SAMPLES, load_dataset
 from vision_sequence import MODES, timeline, wait_until
@@ -29,7 +31,7 @@ MAX_REPLY = 1_048_576
 SENSOR_LIMIT_MS = 5000
 MAX_SENSOR_TRACE = 4 * 1024 * 1024
 SENSOR_STEPS = (4, 8, 16, 32)
-SONAR_NAME = re.compile(r'[A-Za-z][A-Za-z0-9_]{0,63}\Z')
+SONAR_NAME = re.compile(r'[A-Za-z][A-Za-z0-9_]*\Z')
 COLUMNS = ('time_ms', 'hex', 'slot', 'source_slot', 'state', 'sample_id', 'captured_ms')
 STATES = ('normal', 'drop', 'hold', 'recover')
 SIDES = ('left', 'right')
@@ -126,6 +128,43 @@ def bounded_numbers(value, size, low, high):
             and all(type(n) in (float, int) and low <= n <= high for n in value))
 
 
+def read_peripherals(value):
+    if not isinstance(value, dict) or value.keys() != {'model', 'bindings', *PERIPHERAL_FIELDS}:
+        raise ValueError('新格式片段必须包含完整的录制时外设配置；请重新导出。')
+    bindings = value['bindings']
+    gpios = set(PACKAGE.values())
+    if (value['model'] != 'STM32F103C8T6' or not isinstance(bindings, dict) or len(bindings) > len(gpios)
+            or any(not SIGNAL_ROLE.fullmatch(role) or not isinstance(pin, str) or pin not in gpios
+                   for role, pin in bindings.items())):
+        raise ValueError('片段的芯片型号或 GPIO 映射无效；请重新导出。')
+    if len(set(bindings.values())) != len(bindings):
+        raise ValueError('录制时同一 GPIO 对应多项外设，请修正接线设置再录制。')
+    cpr, mips, threshold, signs, uart = (value[key] for key in
+        ('encoder_cpr', 'cpu_mips', 'ir_threshold', 'motor_signs', 'vision_uart'))
+    if (type(cpr) is not int or not 1 <= cpr <= 1_000_000_000
+            or type(mips) is not int or not 1 <= mips <= 0xffffffff
+            or type(threshold) not in (int, float) or not 0 <= threshold <= 1
+            or not isinstance(signs, list) or len(signs) != 2 or any(type(n) is not int or n not in (-1, 1) for n in signs)
+            or uart not in ('usart1', 'usart2', 'usart3')):
+        raise ValueError('片段记录的 USART、每转计数、红外阈值、电机方向或 CPU 指令率无效；请重新导出。')
+    return peripheral_snapshot(value, bindings)
+
+
+def peripheral_differences(recorded, current):
+    def differences():
+        for field, label in (('model', '虚拟芯片'), ('vision_uart', '视觉 USART'),
+                             ('encoder_cpr', '编码器每转计数'), ('ir_threshold', '红外阈值'),
+                             ('motor_signs', '左右电机方向'), ('cpu_mips', 'CPU 指令率（MIPS）')):
+            if recorded[field] != current[field]:
+                yield f'{label}：录制 {recorded[field]}，当前 {current[field]}'
+        before, after = recorded['bindings'], current['bindings']
+        for role in sorted(before.keys() | after.keys()):
+            if before.get(role) != after.get(role):
+                yield f'GPIO {role}：录制 {before.get(role, "未绑定")}，当前 {after.get(role, "未绑定")}'
+
+    return list(differences())
+
+
 def load_sensor_trace(path):
     with path.open('rb') as file:
         raw = file.read(MAX_SENSOR_TRACE + 1)
@@ -136,8 +175,9 @@ def load_sensor_trace(path):
     except (json.JSONDecodeError, RecursionError) as error:
         raise ValueError('固件输入 JSON 无法读取。') from error
     if (not isinstance(trace, dict) or trace.get('format') != 'moonlight-firmware-trace'
-            or type(trace.get('version')) is not int or trace['version'] != 1):
+            or type(trace.get('version')) is not int or trace['version'] not in (1, 2)):
         raise ValueError('请选择波形面板「导出固件输入片段」所得 JSON。')
+    peripherals = read_peripherals(trace.get('peripherals')) if trace['version'] == 2 else None
     step = trace.get('step_ms')
     source_start = trace.get('source_start_ms')
     rows = trace.get('samples')
@@ -165,7 +205,7 @@ def load_sensor_trace(path):
             raise ValueError(prefix + '红外和超声波的通道必须与首个周期一致。')
         entries.append(TraceRow(row['time_ms'] * 1000, bytes(payload), {},
                                 dict(ir=ir, sonar=sonar, encoder=dict(zip(SIDES, encoder)))))
-    return entries, step, source_start
+    return entries, step, source_start, peripherals
 
 
 def validate_sensor_setup(entries, firmware, board):
@@ -401,7 +441,7 @@ def build_report(entries, schedule, step, warmup, tail, origin, peripheral, fing
     return report
 
 
-def compare(args, entries, origin, report_path, source_start=None):
+def compare(args, entries, origin, report_path, source_start=None, recorded_peripherals=None):
     schedule, stop = plan_timeline(entries, args.step_ms, args.warmup_ms, args.tail_ms)
     if not 10 <= args.timeout_s <= 600:
         raise ValueError('每版固件的电脑等待上限须为 10～600 秒。')
@@ -416,10 +456,19 @@ def compare(args, entries, origin, report_path, source_start=None):
     sensor_trace, sensor_rows = None, None
     if source_start is not None:
         sensor_rows = entries
+        current = peripheral_snapshot(firmware, board['bindings'])
+        if recorded_peripherals is None:
+            print('旧版片段没有录制时外设配置；按当前设置回放，外设配置未核对。', flush=True)
+        else:
+            mismatches = peripheral_differences(recorded_peripherals, current)
+            if mismatches:
+                raise ValueError('当前外设配置与录制时不一致；请恢复原配置或重新录制。\n  ' + '\n  '.join(mismatches))
+            print('GPIO、USART、编码器、红外阈值、电机方向及 CPU 指令率与录制时一致。', flush=True)
         validate_sensor_setup(entries, firmware, board)
         first = entries[0].sensors
         bindings = board['bindings']
         sensor_trace = dict(source_start_ms=source_start, recorded_cycles=len(entries),
+                            peripheral_check='unverified_legacy' if recorded_peripherals is None else 'matched',
                             recorded_ir_channels=len(first['ir']), recorded_sonars=list(first['sonar']),
                             bound_ir_channels=[i for i in range(len(first['ir'])) if f'ir{i}' in bindings],
                             bound_sonars=[name for name in first['sonar'] if all(
@@ -565,9 +614,9 @@ def main(argv=None):
             entries = load_trace(args.trace)
             return compare(args, entries, args.source, args.report or session_dir()/'report.json')
         if args.command == 'compare-sensors':
-            entries, args.step_ms, source_start = load_sensor_trace(args.trace)
+            entries, args.step_ms, source_start, peripherals = load_sensor_trace(args.trace)
             return compare(args, entries, 'webots-sensors', args.report or session_dir()/'report.json',
-                           source_start=source_start)
+                           source_start=source_start, recorded_peripherals=peripherals)
         folder = session_dir()
         entries = run_capture(args, folder/'input.csv')
         return compare(args, entries, 'vision-'+args.mode, folder/'report.json')

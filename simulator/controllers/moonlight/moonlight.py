@@ -60,6 +60,7 @@ from vision_link import VisionLink
 from physical_gripper import PhysicalGripper
 from stage_trial import StageTrial, STAGES, starting_pose
 from timed_faults import RoundFaults, parse_plan
+from round_replay import RoundReplay
 diagnostics.phase='scene_config'
 CONFIG=json.loads((ROOT/'scene.json').read_text(encoding='utf-8'))
 STEP=int(CONFIG.get('step_ms',32))
@@ -146,6 +147,7 @@ round_limit=None
 round_error=None
 round_faults=None
 round_tolerance=None
+round_replay=None
 
 state=dict(mode='manual',running=False,group=2,color='red',carrying=False,
            elapsed=0.0,collision=False,grasped=False,placed=None,parked=False,aligned=False,
@@ -164,6 +166,8 @@ keyboard_driving=False
 trace_epoch=0
 trace_start=sim.getTime()
 trace=[]
+firmware_run=0
+trace_firmware_setups={}
 incident_flags=set()
 last_view_wall=time.monotonic()
 active_steps=0
@@ -284,6 +288,8 @@ def trial_report(position):
         report['fault_run']=round_faults.report()
     if round_tolerance is not None:
         report['tolerance_run']=round_tolerance.copy()
+    if round_replay is not None:
+        report['round_replay']=round_replay.report()
     return report
 
 
@@ -395,23 +401,30 @@ def observe_tolerance_start():
                 light={name:round(field.getSFFloat(),5) for name,field in light_fields.items()})
 
 
-def reset(group=None,color=None,stage=None,limit=None,fault_plan=None,tolerance_id=None):
+def reset(group=None,color=None,stage=None,limit=None,fault_plan=None,tolerance_id=None,rerun_expected=None):
     global still,last_encoder,algorithm,effects
     global trace_epoch,trace_start
     global trial,round_id,round_result,ready_at,last_collision_time,round_limit,round_error,round_faults,round_tolerance
+    global round_replay
     diagnostics.phase='round_reset'
     stage=stage if stage in STAGES else trial.stage
     case=tolerance_case(tolerance_id,stage,limit,fault_plan)
     plan=None if fault_plan is None else parse_plan(fault_plan,limit,state['mode'],bool(sonar))
+    replay=(RoundReplay(limit,state['mode'],rerun_expected)
+            if type(limit) is int and 1<=limit<=180 and state['mode'] in ('member','firmware') else None)
+    if rerun_expected is not None and replay is None:
+        raise ValueError('历史单轮复跑需要同一种程序模式和有效限时。')
     close_firmware('reset')
     if round_tolerance is not None or case is not None:
         set_practice_light(case['light_scale'] if case is not None else 1)
     round_tolerance=None if case is None else dict(version=1,case=case,limit_s=limit,observed=None,
         scene_signature=tolerance_signature() if state['mode']=='member' else None)
+    round_replay=replay
     effects=Imperfections(HW.get('imperfections',{}))
     trace_epoch+=1
     trace_start=sim.getTime()
     trace.clear()
+    trace_firmware_setups.clear()
     incident_flags.clear()
     if group is not None:state['group']=max(1,int(group))
     if color in ('red','yellow','blue'):state['color']=color
@@ -473,10 +486,15 @@ def finish_round(reason):
 
 def receive(message):
     global algorithm,firmware,round_error,effects,round_faults
+    global firmware_run
     data=json.loads(message)
     command=data.get('command')
     if command=='start':
         diagnostics.phase='panel_start'
+        if round_replay is not None and round_replay.expected is not None:
+            if (data.get('round_id')!=round_id or data.get('rerun_ticket')!=round_replay.expected['ticket']
+                    or round_replay.rejection or round_replay.started):
+                return
         if sim.getTime()<ready_at:
             log('等待车体和物块停稳后开始')
             return
@@ -484,42 +502,65 @@ def receive(message):
             log('本轮已结束，请先重新摆位')
             return
         round_error=None
-        if round_tolerance is not None and round_tolerance['observed'] is None:
-            round_tolerance['observed']=observe_tolerance_start()
+        settings=board=None
         if state['mode']=='firmware' and firmware is None:
             diagnostics.phase='firmware_start'
             record('firmware_start_requested')
-            if round_faults or round_tolerance is not None:
+            if round_faults or round_tolerance is not None or round_replay is not None:
                 # Hash the exact runtime setup passed to Renode, including live
                 # edits made after the Webots scene was generated.
                 settings=json.loads((ROOT/'firmware.json').read_text(encoding='utf-8-sig'))
                 board=json.loads((ROOT/'board.json').read_text(encoding='utf-8-sig'))
+        if round_replay is not None and not round_replay.started:
+            observed=observe_tolerance_start()
+            if not round_replay.prepare(tolerance_signature(settings,board),observed):
+                log('开跑条件与历史记录不同，复跑未开始。')
+                return
+        if round_tolerance is not None and round_tolerance['observed'] is None:
+            round_tolerance['observed']=round_replay.evidence['observed']
+        if state['mode']=='firmware' and firmware is None:
+            if settings is not None:
                 if round_faults:
                     round_faults.signature=scene_signature(settings,board)
-                else:
+                elif round_tolerance is not None:
                     round_tolerance['scene_signature']=tolerance_signature(settings,board)
                 firmware=FirmwareBridge(settings,board)
             else:
                 firmware=FirmwareBridge()
+            firmware_run+=1
             log('STM32固件已加载，开始同步执行')
             record('firmware_started')
             diagnostics.phase='panel_start'
         if state['elapsed']==0:
-            effects=Imperfections(HW.get('imperfections',{}))
+            if round_replay is not None:
+                effects.restart_sensor_noise()
+            else:
+                effects=Imperfections(HW.get('imperfections',{}))
         if not state['running']:
             state['running']=True
             record('run_started',stage=trial.stage)
     elif command=='pause':
         diagnostics.phase='panel_pause'
+        if round_replay is not None:
+            round_replay.interrupt()
         if state['running']:
             record('run_paused',reason='manual',firmware_active=firmware is not None)
-        if round_tolerance is not None:
+        if round_tolerance is not None or (round_replay is not None and round_replay.expected is not None):
             reset()
             return
         state['running']=False;manual[:]=[0,0]
         round_faults=None
-    elif command=='reset':reset(data.get('group'),data.get('color'),data.get('stage'),data.get('limit'),
-                                data.get('fault_plan'),data.get('tolerance_id'))
+    elif command=='reset':
+        expected=data.get('rerun_expected')
+        if expected is not None and (not isinstance(expected,dict) or data.get('session')!=panel_session or data.get('round_id')!=round_id
+                                     or state['running'] or expected.get('mode')!=state['mode']):
+            return
+        reset(data.get('group'),data.get('color'),data.get('stage'),data.get('limit'),
+              data.get('fault_plan'),data.get('tolerance_id'),expected)
+    elif command=='end_replay':
+        if (data.get('round_id')==round_id and round_replay is not None and round_replay.expected is not None and
+                data.get('rerun_ticket')==round_replay.expected['ticket']):
+            reset()
     elif command=='end_tolerance':
         if round_tolerance is not None and data.get('round_id')==round_id:
             reset()
@@ -527,6 +568,8 @@ def receive(message):
         finish_round('manual')
     elif command=='mode':
         diagnostics.phase='panel_mode'
+        if round_replay is not None:
+            round_replay.interrupt()
         if data['value'] not in CHOICES['mode']:
             raise ValueError('未知的控制模式。')
         close_firmware('switch_mode')
@@ -534,14 +577,16 @@ def receive(message):
         round_faults=None
         state['mode']=data['value'];state['running']=False;manual[:]=[0,0]
         record('mode_changed')
-        if round_tolerance is not None:
+        if round_tolerance is not None or (round_replay is not None and round_replay.expected is not None):
             reset()
         elif state['mode'] in ('member','firmware'):
             algorithm=load_algorithm()
         log('模式已切换，点击开始运行')
     elif command=='reload':
         diagnostics.phase='panel_reload'
-        if round_tolerance is not None:
+        if round_replay is not None:
+            round_replay.interrupt()
+        if round_tolerance is not None or (round_replay is not None and round_replay.expected is not None):
             reset()
         else:
             algorithm=load_algorithm()
@@ -550,10 +595,15 @@ def receive(message):
         round_faults=None
         state['running']=False
         log('程序已重载；点击开始运行，固件将从复位状态执行')
-    elif command=='uart':queue_uart(data['value'])
+    elif command=='uart':
+        if round_replay is not None and state['mode']=='firmware' and data.get('value'):
+            round_replay.external_uart()
+        queue_uart(data['value'])
     elif command=='drive':
         diagnostics.phase='panel_drive'
-        if round_tolerance is not None:
+        if round_replay is not None:
+            round_replay.interrupt()
+        if round_tolerance is not None or (round_replay is not None and round_replay.expected is not None):
             reset()
             return
         if round_result is not None or sim.getTime()<ready_at:
@@ -570,8 +620,12 @@ def receive(message):
     elif command=='gripper':
         action=data['value']
         if claw.command(action):
+            if round_replay is not None:
+                round_replay.interrupt()
             log({'grab':'夹爪正在合拢','release':'夹爪正在张开','lift':'升降机构正在抬起','lower':'升降机构正在降下'}[action])
     elif command=='joint':
+        if round_replay is not None:
+            round_replay.interrupt()
         joint_motors[data['name']].setPosition(float(data['value']))
         log('关节目标已更新：'+data['name'])
     elif command=='snapshot':
@@ -629,7 +683,10 @@ while sim.step(STEP)!=-1:
     current_encoder=[d.getValue()*sign for d,sign in zip(encoders,WHEEL_SIGNS)]
     wheel_speed=[(a-b)*R/DT for a,b in zip(current_encoder,last_encoder)]
     last_encoder=current_encoder
-    firmware_vision=state['running'] and state['mode']=='firmware' and tick%FIRMWARE_VISION_TICKS==0
+    # Timed rounds must start local firmware vision at the same phase,
+    # independently of when the browser sends the start request.
+    vision_tick=round_elapsed_ms()//STEP if round_replay is not None else tick
+    firmware_vision=state['running'] and state['mode']=='firmware' and vision_tick%FIRMWARE_VISION_TICKS==0
     panel_preview=tick%CAMERA_PREVIEW_TICKS==0
     panel_image=None
     image=None
@@ -649,7 +706,10 @@ while sim.step(STEP)!=-1:
         if ok:
             vision_link.camera(png.tobytes(),round(sim.getTime(),6))
     if vision_link:
-        queue_uart(vision_link.receive(bool(state['running'] and state['mode']=='firmware' and firmware)))
+        external_bytes=vision_link.receive(bool(state['running'] and state['mode']=='firmware' and firmware))
+        if round_replay is not None and external_bytes:
+            round_replay.external_uart()
+        queue_uart(external_bytes)
     diagnostics.phase='gripper'
     grasp=observe_gripper()
     diagnostics.phase='simulation_step'
@@ -767,6 +827,8 @@ while sim.step(STEP)!=-1:
                 grip=grasp, block_position=block_pose)
     if firmware_input:
         sample['firmware_input']=firmware_input
+        sample['firmware_run']=firmware_run
+        trace_firmware_setups.setdefault(firmware_run,firmware.peripherals)
     if incident_flags:
         sample['incidents']=sorted(incident_flags)
         incident_flags.clear()
@@ -783,6 +845,7 @@ while sim.step(STEP)!=-1:
                      trial=dict(trial_report(p),id=round_id),round_result=round_result,
                      resetting=sim.getTime()<ready_at,round_error=round_error,
                      target_side='left' if state['group']%2==0 else 'right')
+        if trace_firmware_setups:payload['firmware_setups']=trace_firmware_setups
         if panel_image is not None:payload['image']=panel_image
         sim.wwiSendText(json.dumps(payload,ensure_ascii=True,separators=(',',':')))
         if not panel_data_sent:
@@ -792,6 +855,7 @@ while sim.step(STEP)!=-1:
                    vision_link=vision_link is not None,firmware_configured=configured)
             diagnostics.phase='simulation_step'
         trace.clear()
+        trace_firmware_setups.clear()
     if capture and tick==960//STEP:
         destination=Path(capture);destination.mkdir(parents=True,exist_ok=True)
         sim.exportImage(str(destination/'scene.png'),100)
