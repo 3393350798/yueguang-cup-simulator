@@ -1,82 +1,122 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>月光杯 · 仿真练习台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="moonlight.css?v=practice-history"><link rel="stylesheet" href="trace.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>月光杯 · 仿真练习台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="moonlight.css?v=workspaces"><link rel="stylesheet" href="trace.css?v=workspaces"></head>
 <body>
 <header><div><span class="eyebrow">MOONLIGHT / ROBOTICS LAB</span><h1>月光杯<span>仿真练习台</span></h1></div><span id="connection" class="badge" role="status">连接场景中</span></header>
 <main>
-  <section class="workspace">
-    <div class="section-head"><h2>赛场与轨迹</h2><span id="timer">00:00.0</span></div>
-    <div class="map-wrap"><canvas id="map" width="720" height="720"></canvas></div>
-    <p class="map-note">2000 × 2000 mm 赛规定尺版 · 灰蓝线为实体挡板</p>
-    <div class="toolbar"><button id="start" class="primary">开始运行</button><button id="pause">暂停 / 停车</button><button id="reset">重置场景</button><button id="reload">重载程序</button></div>
-    <p id="message" role="status">先选择模式，再点击开始。会员模板初始为停车。</p>
-    <details class="support"><summary>故障诊断与求助</summary>
-      <p>一直等不到场景数据时，请检查 Webots 是否已加载赛场，确认后刷新面板。</p>
-      <p>遇到报错时，在仿真文件夹内双击 <code>scripts/export-diagnostics.bat</code>，生成后把 ZIP 发给负责人。</p>
-      <p>如果问题发生在某轮练习，可从该轮记录生成求助包；生成前能预览并选择是否附加诊断摘要或失败回放。</p>
-    </details>
-    <div class="settings"><label>组号 <input id="group" type="number" min="1" value="2"></label><label>物块 <select id="color"><option value="red">红色</option><option value="yellow">黄色</option><option value="blue">蓝色</option></select></label><span>修改后点击「重置场景」</span></div>
-    <div class="task-grid"><div><span>指定位置</span><strong id="target">左侧 · 红色</strong></div><div><span>抓取</span><strong id="grasp">等待</strong></div><div><span>放置结果</span><strong id="placed">等待</strong></div><div><span>终点停车</span><strong id="parking">等待</strong></div></div>
-    <details><summary>运行事件</summary><ol id="events"></ol></details>
-    <details class="incident-panel"><summary>失败回放 <span id="incident-count" class="mini"></span></summary>
-      <p>最近 4 段失败回放。已记录的轮次及对应片段还可在「本机练习历史」按批次查看。</p>
-      <ol id="incident-items"></ol><p id="incident-status" role="status"></p>
-      <button id="incident-import" class="small">打开失败片段</button>
-      <input id="incident-file" type="file" accept=".json,application/json" hidden>
-    </details>
-    <section class="trial-panel" aria-labelledby="trial-heading">
-      <div class="section-head"><h2 id="trial-heading">分赛段练习</h2><span id="trial-current" class="mini">全程</span></div>
-      <div class="settings">
+  <div class="view-tabs">
+    <div role="tablist" aria-label="练习与联调">
+      <button type="button" role="tab" id="tab-practice" aria-selected="true" aria-controls="view-practice">练习</button>
+      <button type="button" role="tab" id="tab-batch" aria-selected="false" aria-controls="view-batch" tabindex="-1">批量练习</button>
+      <button type="button" role="tab" id="tab-results" aria-selected="false" aria-controls="view-results" tabindex="-1">练习结果</button>
+      <button type="button" role="tab" id="tab-advanced" aria-selected="false" aria-controls="view-advanced" tabindex="-1">高级联调</button>
+    </div>
+    <button id="pause" type="button" class="stop-button">暂停 / 停车</button>
+  </div>
+  <p id="message" role="status">先选择控制方式，再点击开始。会员模板初始为停车。</p>
+  <div class="view view-columns" id="view-practice" role="tabpanel" aria-labelledby="tab-practice" tabindex="0">
+    <section id="practice-setup" class="card view-setup" aria-label="练习设置">
+      <div id="run-settings" class="settings">
+        <label for="mode">控制方式
+          <select id="mode"><option value="manual">手动探索</option><option value="member">会员算法</option><option value="firmware">STM32 固件 · Renode</option></select>
+        </label>
         <label>赛段 <select id="trial-stage"><option value="full">全程</option><option value="pickup">识别与抓放</option><option value="channel">超声波通道</option><option value="parking">终点停车</option></select></label>
-        <button id="trial-position">摆位</button><button id="trial-finish">记录本轮</button>
+        <label>组号 <input id="group" type="number" min="1" value="2"></label>
+        <label>物块 <select id="color"><option value="red">红色</option><option value="yellow">黄色</option><option value="blue">蓝色</option></select></label>
       </div>
-      <details><summary>多轮对照</summary>
-        <div class="settings">
-          <label>轮数 <input id="trial-count" type="number" min="1" max="20" value="3"></label>
-          <label>每轮秒数 <input id="trial-limit" type="number" min="1" max="180" value="30"></label>
-          <label>方案名 <input id="trial-label" type="text" maxlength="50" value="方案 A"></label>
-          <button id="trial-batch">开始多轮</button><button id="trial-matrix">固定工况（6 轮）</button><button id="trial-export" disabled>导出结果</button><button id="trial-import">对照历史</button>
-          <input id="trial-file" type="file" accept=".json,application/json" hidden>
-        </div>
-        <p>固定工况按偶数、奇数组各跑红、黄、蓝三个物块。每轮沿用所选赛段、用时和当前车辆设置。</p>
-        <details class="fault-plan">
-          <summary>定时故障（用于固定工况）</summary>
-          <p>按每轮开始后的仿真时间触发。两种故障可同时启用，关闭则执行正常六轮。</p>
-          <div class="settings">
-            <label><input id="trial-fault-sonar" type="checkbox"> 超声波无回波</label>
-            <label>开始秒 <input id="trial-sonar-start" type="number" min="0" max="180" step="0.001" value="0.5" disabled></label>
-            <label>持续秒 <input id="trial-sonar-length" type="number" min="0.064" max="180" step="0.001" value="0.5" disabled></label>
-          </div>
-          <div class="settings">
-            <label>虚拟 UART <select id="trial-fault-uart"><option value="">关闭</option><option value="drop">断流</option><option value="delay">延迟</option></select></label>
-            <label>开始秒 <input id="trial-uart-start" type="number" min="0" max="180" step="0.001" value="0.5" disabled></label>
-            <label>持续秒 <input id="trial-uart-length" type="number" min="0.064" max="180" step="0.001" value="0.5" disabled></label>
-            <label>追加毫秒 <input id="trial-uart-delay" type="number" min="1" max="3000" value="150" disabled></label>
-          </div>
-          <p>UART 只模拟发往虚拟 STM32 的输入，需要固件模式。不会访问真实串口。</p>
-        </details>
-        <details class="fault-plan">
-          <summary>赛场容差回归</summary>
-          <p>同一组号、颜色和赛段，依次测试基准、车体横移、物块摆偏及灯光变化。通道和停车不测物块。预设仅供仿真练习，尚未现场测定。</p>
-          <p>先导出旧方案，再通过「对照历史」载入，即可逐项比较。</p>
+      <div class="toolbar">
+        <button id="trial-position">摆位</button><button id="start" class="primary">开始运行</button>
+        <button id="reset">回到起点</button><button id="trial-finish">记录本轮</button>
+      </div>
+      <p class="hint">修改赛段、组号或物块后，先点击「摆位」。</p>
+    </section>
+    <section class="card map-card">
+      <div class="section-head"><h2>赛场与轨迹</h2><span id="timer">00:00.0</span></div>
+      <div class="map-wrap"><canvas id="map" width="720" height="720"></canvas></div>
+      <p class="map-note">2000 × 2000 mm 赛规定尺版 · 灰蓝线为实体挡板</p>
+      <div id="trial-current" class="mini active-stage">全程</div>
+      <div class="task-grid"><div><span>指定位置</span><strong id="target">左侧 · 红色</strong></div><div><span>抓取</span><strong id="grasp">等待</strong></div><div><span>放置结果</span><strong id="placed">等待</strong></div><div><span>终点停车</span><strong id="parking">等待</strong></div></div>
+    </section>
+    <aside>
+      <section class="card"><div class="section-head"><h2>车载摄像头</h2><button id="snapshot" class="small">保存原图</button></div><div class="camera"><img id="camera" alt="虚拟车载摄像头画面"><span id="camera-empty">等待摄像头画面</span></div><p class="hint">网页显示压缩预览；「保存原图」可导出完整分辨率的 PNG。</p></section>
+      <section class="card">
+        <div class="section-head"><h2>驾驶与夹爪</h2><span class="mini" id="step-badge">32 ms / 周期</span></div>
+        <p id="mode-help">按住方向键按钮驾驶，松开停车。也可在 Webots 画面中使用 W/A/S/D。</p>
+        <div class="drive"><button data-drive="0.12,0.12" aria-label="前进">↑</button><div><button data-drive="-0.07,0.07" aria-label="左转">↶</button><button data-drive="-0.1,-0.1" aria-label="后退">↓</button><button data-drive="0.07,-0.07" aria-label="右转">↷</button></div></div>
+        <div class="two"><button id="grab">合拢夹爪</button><button id="release">张开夹爪</button><button id="lift">抬升夹爪</button><button id="lower">降下夹爪</button></div>
+        <p id="claw-status" role="status"></p>
+        <button id="reload">重载算法</button>
+      </section>
+    </aside>
+  </div>
+  <div class="view" id="view-batch" role="tabpanel" aria-labelledby="tab-batch" tabindex="0" hidden>
+    <section class="card trial-panel" aria-labelledby="batch-heading">
+      <h2 id="batch-heading">批量练习设置</h2>
+      <div id="batch-setup"></div>
+      <div class="settings">
+        <label>轮数 <input id="trial-count" type="number" min="1" max="20" value="3"></label>
+        <label>每轮秒数 <input id="trial-limit" type="number" min="1" max="180" value="30"></label>
+        <label>方案名 <input id="trial-label" type="text" maxlength="50" value="方案 A"></label>
+      </div>
+      <div class="batch-actions">
+        <section>
+          <h3>重复同一工况</h3>
+          <p>按当前赛段、组号和物块运行指定轮数。</p>
+          <button id="trial-batch" class="primary">开始多轮</button>
+        </section>
+        <section>
+          <h3>固定工况</h3>
+          <p>偶数、奇数组各跑红、黄、蓝三个物块。</p>
+          <button id="trial-matrix">固定工况（6 轮）</button>
+          <details class="fault-plan">
+            <summary>定时故障（用于固定工况）</summary>
+            <p>按每轮开始后的仿真时间触发。两种故障可同时启用，关闭则执行正常六轮。</p>
+            <div class="settings">
+              <label><input id="trial-fault-sonar" type="checkbox"> 超声波无回波</label>
+              <label>开始秒 <input id="trial-sonar-start" type="number" min="0" max="180" step="0.001" value="0.5" disabled></label>
+              <label>持续秒 <input id="trial-sonar-length" type="number" min="0.064" max="180" step="0.001" value="0.5" disabled></label>
+            </div>
+            <div class="settings">
+              <label>虚拟 UART <select id="trial-fault-uart"><option value="">关闭</option><option value="drop">断流</option><option value="delay">延迟</option></select></label>
+              <label>开始秒 <input id="trial-uart-start" type="number" min="0" max="180" step="0.001" value="0.5" disabled></label>
+              <label>持续秒 <input id="trial-uart-length" type="number" min="0.064" max="180" step="0.001" value="0.5" disabled></label>
+              <label>追加毫秒 <input id="trial-uart-delay" type="number" min="1" max="3000" value="150" disabled></label>
+            </div>
+            <p>UART 只模拟发往虚拟 STM32 的输入，需要固件模式。不会访问真实串口。</p>
+          </details>
+        </section>
+        <section>
+          <h3>赛场容差</h3>
+          <p>依次测试基准、车体横移、物块摆偏和灯光变化。通道和停车不测物块。预设供仿真练习，尚未现场测定。</p>
           <button id="trial-tolerance">开始容差练习</button>
-          <p id="trial-tolerance-summary" role="status"></p>
-          <div id="trial-tolerance-comparison" class="trial-regression" hidden>
-            <p><strong>容差工况对照</strong></p>
-            <p id="trial-tolerance-comparison-summary" role="status"></p>
-            <div class="trial-scroll" tabindex="0" role="region" aria-label="可滚动的容差工况对照"><table aria-label="容差工况对照"><thead><tr><th>容差预设</th><th>历史</th><th>当前</th><th>变化</th></tr></thead><tbody id="trial-tolerance-comparison-rows"></tbody></table></div>
-          </div>
-        </details>
-        <p id="trial-summary" role="status">尚无记录</p>
-        <div id="trial-regression" class="trial-regression" hidden>
-          <p id="trial-regression-summary" role="status"></p>
-          <div class="trial-scroll"><table><thead><tr><th>赛段／工况</th><th>历史</th><th>当前</th><th>变化</th></tr></thead><tbody id="trial-regression-rows"></tbody></table></div>
-        </div>
-        <div class="trial-scroll"><table><thead><tr><th>方案／赛段／工况</th><th>首个未通过项</th><th>抓放</th><th>通道</th><th>停车</th><th>用时</th></tr></thead><tbody id="trial-rows"></tbody></table></div>
-      </details>
-      <details class="practice-history">
+          <p id="trial-tolerance-summary"></p>
+        </section>
+      </div>
+      <p id="trial-progress" role="status">等待开始批量练习。</p>
+      <button id="show-results" type="button">查看练习结果</button>
+    </section>
+  </div>
+  <div class="view view-columns" id="view-results" role="tabpanel" aria-labelledby="tab-results" tabindex="0" hidden>
+    <section class="card trial-panel" aria-labelledby="trial-heading">
+      <div class="section-head"><h2 id="trial-heading">当前练习结果</h2></div>
+      <div class="toolbar results-tools">
+        <button id="trial-export" disabled>导出结果</button><button id="trial-import">导入旧报告对照</button>
+        <input id="trial-file" type="file" accept=".json,application/json" hidden>
+      </div>
+      <p id="trial-summary" role="status">尚无记录</p>
+      <div id="trial-regression" class="trial-regression" hidden>
+        <p id="trial-regression-summary" role="status"></p>
+        <div class="trial-scroll" tabindex="0" role="region" aria-label="常规工况对照"><table><thead><tr><th>赛段／工况</th><th>历史</th><th>当前</th><th>变化</th></tr></thead><tbody id="trial-regression-rows"></tbody></table></div>
+      </div>
+      <div class="trial-scroll" tabindex="0" role="region" aria-label="练习结果表"><table><thead><tr><th>方案／赛段／工况</th><th>首个未通过项</th><th>抓放</th><th>通道</th><th>停车</th><th>用时</th></tr></thead><tbody id="trial-rows"></tbody></table></div>
+      <div id="trial-tolerance-comparison" class="trial-regression" hidden>
+        <h3>容差工况对照</h3>
+        <p id="trial-tolerance-comparison-summary" role="status"></p>
+        <div class="trial-scroll" tabindex="0" role="region" aria-label="可滚动的容差工况对照"><table aria-label="容差工况对照"><thead><tr><th>容差预设</th><th>历史</th><th>当前</th><th>变化</th></tr></thead><tbody id="trial-tolerance-comparison-rows"></tbody></table></div>
+      </div>
+      <details class="practice-history" open>
         <summary>本机练习历史</summary>
-        <p>按批次保留本工程的结果与失败回放，不会自动上传。对照两套方案仍请导出结果。</p>
+        <p>展开对应批次，可查看每轮的失败回放、求助和复跑入口（需保存完整开跑条件）。历史只保留在本机。</p>
         <p id="history-status" role="status">等待场景确认本工程。</p>
         <p id="history-replay-status" role="status"></p>
         <button id="history-stop-replay" class="small" type="button" hidden>停止本次复跑</button>
@@ -84,8 +124,24 @@
         <button id="history-clear" class="small" type="button" disabled>清除本工程历史与片段</button>
       </details>
     </section>
-    <section class="trace-panel" aria-labelledby="trace-heading">
-      <div class="section-head"><h2 id="trace-heading">调试波形</h2><span class="mini" id="trace-source">实时</span></div>
+    <aside>
+      <section class="card result-tools" aria-label="失败回放与求助">
+        <details class="incident-panel"><summary>失败回放 <span id="incident-count" class="mini"></span></summary>
+          <p>最近 4 段失败回放，也可以打开已保存的片段。</p>
+          <ol id="incident-items"></ol><p id="incident-status" role="status"></p>
+          <button id="incident-import" class="small">打开失败片段</button>
+          <input id="incident-file" type="file" accept=".json,application/json" hidden>
+        </details>
+        <details class="support"><summary>故障诊断与求助</summary>
+          <p>某轮练习出错时，从该轮记录打开求助包。生成前可以预览，并选择附加诊断摘要或失败回放。</p>
+          <p>若无法连接场景，先确认 Webots 已加载赛场，再刷新网页。也可在 Windows 启动菜单选择「排障与接入」导出诊断包发给负责人。</p>
+        </details>
+      </section>
+    </aside>
+  </div>
+  <div class="view view-columns" id="view-advanced" role="tabpanel" aria-labelledby="tab-advanced" tabindex="0" hidden>
+    <section class="card trace-panel" aria-labelledby="trace-heading">
+      <div class="section-head"><h2 id="trace-heading" tabindex="-1">调试波形</h2><span class="mini" id="trace-source">实时</span></div>
       <div class="trace-tools">
         <label for="trace-group">信号组</label>
         <select id="trace-group"><option value="drive">驱动 · PWM / 轮速 / 编码器</option><option value="environment">环境 · 红外 / 超声波</option><option value="incident" hidden>失败回放 · PWM / 超声波</option></select>
@@ -109,31 +165,29 @@
       <div class="trace-state" id="trace-time">等待采样</div>
       <details class="trace-uart"><summary>串口收发记录 · HEX</summary><pre id="trace-uart">当前时间窗无收发</pre></details>
     </section>
-  </section>
-  <aside>
-    <section class="card"><div class="section-head"><h2>控制方式</h2><span class="mini" id="step-badge">32 ms / 周期</span></div>
-      <select id="mode"><option value="manual">手动探索</option><option value="member">会员算法 · member_algorithm.py</option><option value="firmware">STM32固件 · Renode</option></select>
-      <p id="mode-help">按住方向键按钮驾驶，松开停车。也可在 Webots 画面中使用 W/A/S/D。</p>
-      <div class="drive"><button data-drive="0.12,0.12" aria-label="前进">↑</button><div><button data-drive="-0.07,0.07" aria-label="左转">↶</button><button data-drive="-0.1,-0.1" aria-label="后退">↓</button><button data-drive="0.07,-0.07" aria-label="右转">↷</button></div></div>
-      <div class="two"><button id="grab">合拢夹爪</button><button id="release">张开夹爪</button><button id="lift">抬升夹爪</button><button id="lower">降下夹爪</button></div>
-      <p id="claw-status" role="status"></p>
-      <button id="channel" class="text-button">放到超声波区域入口 →</button>
-    </section>
-    <section class="card" id="firmware-card" hidden>
-      <h2>STM32 固件执行</h2><p id="firmware-status">点击开始加载固件</p>
-      <pre id="uart-output" style="white-space:pre-wrap;max-height:180px;overflow:auto"></pre>
-      <div class="uart-send-row">
-        <select id="uart-format" aria-label="串口收发格式"><option value="text">文本＋换行</option><option value="hex">HEX 字节</option></select>
-        <input id="uart-input" aria-label="发送到 MCU 串口的数据" placeholder="串口文本">
-        <button id="uart-send">发送</button>
-      </div>
-    </section>
-    <section class="card"><div class="section-head"><h2>车载摄像头</h2><button id="snapshot" class="small">保存原图</button></div><div class="camera"><img id="camera" alt="虚拟车载摄像头画面"><span id="camera-empty">等待摄像头画面</span></div><p class="hint">网页显示压缩预览；「保存原图」可导出完整分辨率的 PNG。</p></section>
-    <section class="card"><div class="section-head"><h2>传感器</h2><span class="mini">红外归一化读数</span></div><div id="ir" class="ir"></div><div id="sonars" class="sonars"></div><div class="wheel"><span id="wheel-left">左轮 0.000 m/s</span><span id="wheel-right">右轮 0.000 m/s</span></div><span id="collision" class="badge">区域内无碰撞记录</span></section>
-    <section class="card" id="joint-card" hidden><h2>装配体关节</h2><div id="joint-controls"></div><p class="hint">旋转关节使用rad，移动关节使用m；填写目标位置后点击设置。</p></section>
-    <section class="card"><h2>当前小车硬件</h2><p id="hardware-summary"></p><p id="board-summary"></p><p>关闭 Webots 后，双击 scripts/import-hardware.bat 导入模型和嘉立创EDA网表；scripts/configure.bat 可编辑尺寸、传感器。保存后重新运行 start.bat。</p></section>
-    <section class="card learn"><h2>开始写自己的算法</h2><p>打开 <code>simulator/controllers/moonlight/member_algorithm.py</code>，修改 <code>vision()</code> 和 <code>step()</code>。保存后选择「会员算法」，点击「重载算法」。</p><p>输入：图像、红外、距离、编码器。<br>输出：左右轮速度、夹爪开合及升降。</p></section>
-  </aside>
+    <aside>
+      <section class="card" id="firmware-card" hidden>
+        <h2>STM32 固件执行</h2><p id="firmware-status">点击开始加载固件</p>
+        <pre id="uart-output" style="white-space:pre-wrap;max-height:180px;overflow:auto"></pre>
+        <div class="uart-send-row">
+          <select id="uart-format" aria-label="串口收发格式"><option value="text">文本＋换行</option><option value="hex">HEX 字节</option></select>
+          <input id="uart-input" aria-label="发送到 MCU 串口的数据" placeholder="串口文本">
+          <button id="uart-send">发送</button>
+        </div>
+      </section>
+      <section class="card"><div class="section-head"><h2>传感器</h2><span class="mini">红外归一化读数</span></div><div id="ir" class="ir"></div><div id="sonars" class="sonars"></div><div class="wheel"><span id="wheel-left">左轮 0.000 m/s</span><span id="wheel-right">右轮 0.000 m/s</span></div><span id="collision" class="badge">区域内无碰撞记录</span></section>
+      <section class="card" id="joint-card" hidden><h2>装配体关节</h2><div id="joint-controls"></div><p class="hint">旋转关节使用rad，移动关节使用m；填写目标位置后点击设置。</p></section>
+      <section class="card"><h2>当前小车硬件</h2><p id="hardware-summary"></p><p id="board-summary"></p><p>关闭 Webots 后，从 Windows 启动菜单进入「配置小车」，可修改尺寸和传感器，或导入模型、嘉立创 EDA 网表和固件。保存后重新开始练习。</p></section>
+      <section class="card learn">
+        <h2>桌面联调工具</h2>
+        <p>在项目文件夹中双击脚本：<code>scripts/vision-replay.bat</code>（视觉样本）、<code>scripts/vision-sequence.bat</code>（连续帧）、<code>scripts/vision-firmware.bat</code>（视觉固件联测）或 <code>scripts/firmware-bench.bat</code>（固件测试台）。</p>
+      </section>
+      <section class="card learn"><h2>开始写自己的算法</h2><p>打开 <code>simulator/controllers/moonlight/member_algorithm.py</code>，修改 <code>vision()</code> 和 <code>step()</code>。保存后选择「会员算法」，点击「重载算法」。</p><p>输入：图像、红外、距离、编码器。<br>输出：左右轮速度、夹爪开合及升降。</p></section>
+      <section class="card">
+        <h2>运行事件</h2><ol id="events"></ol>
+      </section>
+    </aside>
+  </div>
 </main>
 <dialog id="help-dialog" aria-labelledby="help-title">
   <div class="help-head"><div><h2 id="help-title">导出本轮求助包</h2><p id="help-scenario"></p><p id="help-finding" class="help-finding"></p></div><button id="help-close" type="button" aria-label="关闭">关闭</button></div>

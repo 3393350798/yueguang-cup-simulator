@@ -102,7 +102,7 @@ function Start-Moonlight {
     $env:PYTHONUNBUFFERED = '1'
     $env:YUEGUANG_PYTHON = Join-Path $repository '.venv\Scripts\python.exe'
     if (-not (Test-Path -LiteralPath $env:YUEGUANG_PYTHON -PathType Leaf)) {
-        return Complete-LaunchFailure 'missing_python' '未找到项目 Python。请在启动与排障菜单选择「安装项目依赖」，或运行 setup.bat。'
+        return Complete-LaunchFailure 'missing_python' '未找到项目 Python。请在「排障与接入」选择「安装项目依赖」，或运行 setup.bat。'
     }
     $env:PATH = (Split-Path $env:YUEGUANG_PYTHON -Parent) + ';' + $env:PATH
     if (-not $WebotsHome) {
@@ -178,7 +178,7 @@ function Start-Moonlight {
             Write-MoonlightEvent 'launch_ready'
             Write-MoonlightLog '[4/4] 本次控制器已上送首个状态。'
             Write-MoonlightLog "练习地址：$panel"
-            Write-MoonlightLog '实体相机、串口和协议回包未在本次启动中检查；可在启动与排障菜单按方案自检。'
+            Write-MoonlightLog '实体相机、串口和协议回包未在本次启动中检查；可在「排障与接入」按方案自检。'
             if (-not $NoBrowser) {
                 try { Start-Process $panel -ErrorAction Stop } catch {
                     Write-MoonlightEvent 'browser_open_failed' -Code 'browser_open_failed'

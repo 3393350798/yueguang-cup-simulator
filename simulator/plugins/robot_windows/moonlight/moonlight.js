@@ -11,9 +11,43 @@ const setText=(node,value)=>{if(node.textContent!==value)node.textContent=value;
 const colors={red:'红色',yellow:'黄色',blue:'蓝色'};
 const hardware=config.robot;
 const deviceNames={front:'前距',left:'左距',right:'右距',rear:'后距'};
+const tabs=[...document.querySelectorAll('.view-tabs [role="tab"]')];
+const panels=tabs.map(tab=>$(tab.getAttribute('aria-controls')));
+const setup=$('run-settings');
+function selectTab(next,focus=true){
+  const target=$('tab-'+next);
+  if(!target)return;
+  tabs.forEach((tab,i)=>{
+    const active=tab===target;
+    tab.setAttribute('aria-selected',String(active));
+    tab.tabIndex=active?0:-1;
+    panels[i].hidden=!active;
+  });
+  // Move the shared controls instead of copying values between two layouts.
+  const host=next==='batch'?$('batch-setup'):$('practice-setup');
+  if(setup.parentElement!==host)host.prepend(setup);
+  if(focus)target.focus();
+}
+tabs.forEach((tab,i)=>{
+  tab.onclick=()=>selectTab(tab.id.slice(4));
+  tab.onkeydown=event=>{
+    const next={ArrowLeft:(i+tabs.length-1)%tabs.length,ArrowRight:(i+1)%tabs.length,Home:0,End:tabs.length-1}[event.key];
+    if(!Number.isInteger(next))return;
+    event.preventDefault();
+    selectTab(tabs[next].id.slice(4));
+  };
+});
+$('show-results').onclick=()=>selectTab('results');
 $('step-badge').textContent=`${config.step_ms??32} ms / 周期`;
 const trace=initTrace(config.step_ms??32,showIncidentFrame);
-const incidents=initIncidents({stepMs:config.step_ms??32,field:config.field_revision,open:trace.openIncident});
+const incidents=initIncidents({
+  stepMs:config.step_ms??32,field:config.field_revision,
+  open(clip,names){
+    selectTab('advanced',false);
+    trace.openIncident(clip,names);
+    $('trace-heading').focus({preventScroll:true});
+  }
+});
 $('hardware-summary').textContent=`${hardware.name} · 底盘 ${hardware.body.length_mm} × ${hardware.body.width_mm} mm · 轮径 ${hardware.wheels.radius_mm*2} mm · 轮距 ${hardware.wheels.track_mm} mm · 红外 ${hardware.ir.positions_mm.length} 路 · 超声波 ${hardware.sonar.sensors.length} 路 · 摄像头 ${hardware.camera.width} × ${hardware.camera.height}`;
 const model=hardware.model||{kind:'parametric'};
 const claw=config.gripper||{kind:'none',jaws:[],lift:null};
@@ -256,9 +290,14 @@ function paintMap(ctx,size,snapshot,route){
   }
 }
 draw();
-for(const id of ['start','reload','snapshot','channel'])$(id).onclick=()=>send(id);
+for(const id of ['start','reload','snapshot'])$(id).onclick=()=>send(id);
 $('pause').onclick=trials.pause;
-$('reset').onclick=()=>{path=[];mapDirty=true;send('reset',{group:Number($('group').value),color:$('color').value,stage:'full'});};
+$('reset').onclick=()=>{
+  $('trial-stage').value='full';
+  path=[];
+  mapDirty=true;
+  send('reset',{group:Number($('group').value),color:$('color').value,stage:'full'});
+};
 $('mode').onchange=()=>{send('mode',{value:$('mode').value});$('mode-help').textContent=help[$('mode').value];};
 for(const button of document.querySelectorAll('[data-drive]')){
   button.onpointerdown=event=>{button.setPointerCapture(event.pointerId);send('drive',{value:button.dataset.drive.split(',').map(Number)});};

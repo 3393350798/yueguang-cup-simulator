@@ -128,7 +128,9 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1,history){
     $('finish').disabled=Boolean(pendingReplayEnd||batch||!current?.trial||current.round_result||current.resetting);
     const ordinaryRow=r=>!['tolerance','rerun'].includes(r.suite);
     const ordinary=records.filter(ordinaryRow), old=baseline.filter(ordinaryRow);
-    $('summary').textContent=active+(notice?notice+' ':'')+(pendingReplayEnd?'等待场景恢复摆位。 ':'')
+    const progress=active+(notice?notice+' ':'')+(pendingReplayEnd?'等待场景恢复摆位。 ':'');
+    $('progress').textContent=progress.trim()||'等待开始批量练习。';
+    $('summary').textContent=progress
       +(ordinary.length?'当前 '+totals(ordinary):records.length?'练习记录见下表':'尚无记录')
       +(old.length?'；历史 '+totals(old):'');
     const r=lastTolerance?toleranceSummary(lastTolerance,records):null;
@@ -356,7 +358,6 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1,history){
       const tolerance=data.tolerance_report==null?null:readToleranceReport(data.tolerance_report);
       if(data.tolerance_report!=null&&!tolerance)throw new Error('容差报告格式不符');
       baseline=data.records;baselineTolerance=tolerance;notice='';redraw();
-      if(tolerance)$('tolerance-comparison').closest('details').open=true;
     }catch(error){notice='无法打开对照报告：'+error.message;updateProgress();}
   };
   return {
