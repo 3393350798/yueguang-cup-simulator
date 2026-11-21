@@ -833,13 +833,19 @@ while sim.step(STEP)!=-1:
         sample['incidents']=sorted(incident_flags)
         incident_flags.clear()
     trace.append(sample)
-    if tick%PANEL_TICKS==0:
+    panel_update=tick%PANEL_TICKS==0
+    capture_update=capture and tick==960//STEP
+    # Team vision results are for the local algorithm and may contain bytes or
+    # NumPy objects. The panel uses camera preview and the actual UART trace.
+    if panel_update or capture_update:
+        panel_sensors={key:value for key,value in sensors.items() if key!='vision'}
+    if panel_update:
         now=time.monotonic()
         if panel_preview:
             panel_rate=active_steps*DT/max(now-last_view_wall,.001)
             last_view_wall=now
             active_steps=0
-        payload=dict(state,sensors=sensors,pose=p,firmware=firmware_status,panel_session=panel_session,panel_tick=tick,
+        payload=dict(state,sensors=panel_sensors,pose=p,firmware=firmware_status,panel_session=panel_session,panel_tick=tick,
                      project_version=PROJECT_VERSION,history_project_id=HISTORY_PROJECT_ID,
                      trace=trace,trace_epoch=trace_epoch,rate=panel_rate,claw=grasp,block_position=block_pose,
                      trial=dict(trial_report(p),id=round_id),round_result=round_result,
@@ -856,11 +862,11 @@ while sim.step(STEP)!=-1:
             diagnostics.phase='simulation_step'
         trace.clear()
         trace_firmware_setups.clear()
-    if capture and tick==960//STEP:
+    if capture_update:
         destination=Path(capture);destination.mkdir(parents=True,exist_ok=True)
         sim.exportImage(str(destination/'scene.png'),100)
         cv2.imencode('.png',image)[1].tofile(str(destination/'camera.png'))
-        (destination/'sensors.json').write_text(json.dumps(sensors,indent=2),encoding='utf-8')
+        (destination/'sensors.json').write_text(json.dumps(panel_sensors,indent=2),encoding='utf-8')
     if os.environ.get('YUEGUANG_AUTOCLOSE') and sim.getTime()>float(os.environ['YUEGUANG_AUTOCLOSE']):
         if capture:
             (Path(capture)/'result.json').write_text(json.dumps(dict(state,pose=pose()),ensure_ascii=False,indent=2),encoding='utf-8')

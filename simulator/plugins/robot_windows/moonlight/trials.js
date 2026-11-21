@@ -64,7 +64,7 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1,history){
     const group=Math.round(Number(value('group')));
     return {stage:$('stage').value,group:Number.isSafeInteger(group)&&group>0?group:1,color:value('color')};
   };
-  let current,batch,completedEpoch,orphanedEpoch,clipRevision,baseline=[],notice='',matrixSerial=0,toleranceSerial=0,lastTolerance=null;
+  let current,batch,pendingReplayEnd,completedEpoch,orphanedEpoch,clipRevision,baseline=[],notice='',matrixSerial=0,toleranceSerial=0,lastTolerance=null;
   let baselineTolerance=null,toleranceComparison=null;
   const records=[];
   // Report JSON stays separate from replay JSON and browser-only lookup keys.
@@ -121,13 +121,14 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1,history){
     $('batch').textContent=batch?.kind==='repeat'?'停止多轮':'开始多轮';
     $('matrix').textContent=batch?.kind==='matrix'?'停止固定工况':'固定工况（6 轮）';
     $('tolerance').textContent=batch?.kind==='tolerance'?'停止容差练习':'开始容差练习';
-    $('batch').disabled=Boolean(batch&&batch.kind!=='repeat');
-    $('matrix').disabled=Boolean(batch&&batch.kind!=='matrix');
-    $('tolerance').disabled=Boolean(batch&&batch.kind!=='tolerance');
-    $('finish').disabled=Boolean(batch||!current?.trial||current.round_result||current.resetting);
+    $('batch').disabled=Boolean(pendingReplayEnd||batch&&batch.kind!=='repeat');
+    $('matrix').disabled=Boolean(pendingReplayEnd||batch&&batch.kind!=='matrix');
+    $('tolerance').disabled=Boolean(pendingReplayEnd||batch&&batch.kind!=='tolerance');
+    $('position').disabled=Boolean(pendingReplayEnd);
+    $('finish').disabled=Boolean(pendingReplayEnd||batch||!current?.trial||current.round_result||current.resetting);
     const ordinaryRow=r=>!['tolerance','rerun'].includes(r.suite);
     const ordinary=records.filter(ordinaryRow), old=baseline.filter(ordinaryRow);
-    $('summary').textContent=active+(notice?notice+' ':'')
+    $('summary').textContent=active+(notice?notice+' ':'')+(pendingReplayEnd?'等待场景恢复摆位。 ':'')
       +(ordinary.length?'当前 '+totals(ordinary):records.length?'练习记录见下表':'尚无记录')
       +(old.length?'；历史 '+totals(old):'');
     const r=lastTolerance?toleranceSummary(lastTolerance,records):null;
@@ -186,6 +187,7 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1,history){
     updateProgress();
   }
   function position(){
+    if(pendingReplayEnd)return;
     if(batch)abort(batch.kind==='rerun'?'已停止本次复跑。':'多轮已停止。');
     send('reset',settings());
   }
@@ -195,7 +197,19 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1,history){
     batch.ran=false;
     send('reset',batch.cases[batch.index]);
   }
+  function clearReplayEnd(){
+    if(!pendingReplayEnd)return;
+    clearTimeout(pendingReplayEnd.timer);
+    pendingReplayEnd=null;
+  }
   function endReplay(plan){
+    clearReplayEnd();
+    // Wait for the reset to be observed. Otherwise a quick next batch can
+    // predict its first round ID from the completed replay's stale state.
+    pendingReplayEnd={session:plan.session,round:plan.expected,timer:setTimeout(()=>{
+      clearReplayEnd();
+      updateProgress();
+    },10000)};
     send('end_replay',{round_id:plan.expected,rerun_ticket:plan.ticket});
   }
   function startReplay(source){
@@ -203,6 +217,7 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1,history){
     const fail=message=>history.replayStatus(message,batch?.kind==='rerun');
     if(!prior)return fail('这轮未保存完整的开跑条件，无法自动复跑。');
     if(!current?.trial||source.project!==current.history_project_id)return fail('请先连接记录所属工程。');
+    if(pendingReplayEnd)return fail('上一次复跑结束，正在恢复摆位，请稍候。');
     if(batch||current.running||current.resetting)return fail('当前仍有练习或摆位进行中，请等待结束。');
     if(value('mode')!==scenario.mode||current.mode!==scenario.mode)
       return fail('请先切回历史轮次的「'+(scenario.mode==='member'?'会员算法':'STM32 固件')+'」模式。');
@@ -228,6 +243,7 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1,history){
     updateProgress();
   }
   function startBatch(kind){
+    if(pendingReplayEnd)return;
     if(batch){abort(batch.kind==='tolerance'?'容差练习已停止；已完成的记录可以导出。':'多轮已停止；已完成的记录可以导出。',true);return;}
     if(!current?.trial)notice='请先连接场景。';
     else if(current.mode!==value('mode'))notice='控制方式正在切换，请稍后开始。';
@@ -354,9 +370,15 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1,history){
       const initial=current==null;
       current=state;
       if(!state.trial)return;
+      if(pendingReplayEnd&&(state.panel_session!==pendingReplayEnd.session||
+          state.trial.id>pendingReplayEnd.round&&!state.resetting||
+          state.trial.id===pendingReplayEnd.round&&state.trial.round_replay?.ticket==null&&!state.resetting)){
+        clearReplayEnd();
+        updateProgress();
+      }
       const stageText=names[state.trial.stage]+(state.resetting?' · 等待停稳':'');
       if($('current').textContent!==stageText)$('current').textContent=stageText;
-      const disabled=Boolean(batch||state.round_result||state.resetting);
+      const disabled=Boolean(pendingReplayEnd||batch||state.round_result||state.resetting);
       if($('finish').disabled!==disabled)$('finish').disabled=disabled;
       if(clipRevision!==incidents.revision)redraw();
       if(!batch){
@@ -417,6 +439,7 @@ export function initTrials(send,incidents,help,presets=[],lightGain=1,history){
     },
     disconnect(){
       current=null;
+      clearReplayEnd();
       if(batch)abort(batch.kind==='rerun'?'面板已断开，正在执行的复跑可能持续到时限。重新连接后可点「暂停 / 停车」。':'场景已断开，多轮已停止。');
       redraw();
     }
